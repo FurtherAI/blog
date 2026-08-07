@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prefix Tree Packing in ART</title>
+  <meta name="description" content="How ART packs shared-prefix training batches as a radix tree, then solves a generalized bin-packing problem to fit that tree into fixed-length rows." />
+  <script src="../../assets/js/theme.js"></script>
+  <link rel="stylesheet" href="../../assets/css/base.css" />
+  <link rel="stylesheet" href="post.css" />
+  <style>
+    button[data-theme-toggle] {
+      font-family: var(--sans);
+      font-size: 0.8rem;
+      background: none;
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      padding: 0.3rem 0.6rem;
+      cursor: pointer;
+      float: right;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="site">
+      <button data-theme-toggle aria-label="Toggle dark mode">Dark</button>
+      <a class="brand" href="../../">FurtherAI</a>
+      <nav><a href="https://github.com/FurtherAI" target="_blank" rel="noopener">GitHub</a></nav>
+    </header>
+
+    <h1>Prefix Tree Packing in ART</h1>
+    <p class="byline">August 2026 &middot; ART / Megatron</p>
+
+    <p>
+      A training batch has a lot of accidental structure: many completions per prompt
+      in a GRPO or CISPO group, a system prompt repeated across otherwise-unrelated
+      tasks, several SFT completions distilled from one source. Whenever two sequences
+      in the batch share a token prefix, encoding that prefix twice is wasted compute.
+      ART packs the batch as a radix tree instead of a list of sequences, then solves
+      a bin-packing problem to fit that tree into fixed-length training rows.
+    </p>
+
+    <h2>The tree</h2>
+
+    <p>
+      Treat each tokenized sequence as a root-to-leaf path. Two sequences that agree on
+      their first <em>k</em> tokens can share one node covering those <em>k</em> tokens;
+      where they disagree, the tree branches. Building this shape is a small recursive
+      procedure: find the longest run every active sequence agrees on, emit it once,
+      then partition the rest by their next token and recurse on each partition.
+    </p>
+
+    <pre><code>def build_segments(sequences, start=0, parent=None):
+    active = [s for s in sequences if len(s) > start]
+    if not active:
+        return
+    end = start
+    while end &lt; min(len(s) for s in active) and len({s[end] for s in active}) == 1:
+        end += 1
+    if end &gt; start:                       # a shared run: emit it once, recurse past it
+        segment = emit(active, start, end, parent)
+        yield from build_segments(active, start=end, parent=segment)
+        return
+    for _, branch in groupby(sorted(active, key=lambda s: s[start]),
+                              key=lambda s: s[start]):
+        yield from build_segments(list(branch), start, parent)   # split by next token</code></pre>
+
+    <p>
+      That's the shape of it, simplified from ART's actual walk in
+      <code>prefix_tree_packing.py</code>. Two refinements matter in practice. First, a
+      configurable minimum shared-segment length (64 tokens by default) keeps the tree
+      from paying attention-kernel and bookkeeping overhead to share a handful of
+      tokens. Second, sharing never crosses into a token that must be trained on
+      independently &mdash; each branch keeps one duplicated, non-trainable context
+      token right at its join point, so it still gets its own next-token query
+      position when the model is asked to predict the first token that's actually
+      unique to it.
+    </p>
+
+    <figure class="card tree-figure">
+      <div class="seq-group">
+        <div class="seq-row">
+          <div class="seq-row-label">seq 1</div>
+          <div class="bin-track" style="max-width:26rem">
+            <div class="bin-seg seg-1" style="width:29%">R</div>
+            <div class="bin-seg seg-2" style="width:43%">P1</div>
+            <div class="bin-seg seg-4" style="width:21%">C1a</div>
+          </div>
+        </div>
+        <div class="seq-row">
+          <div class="seq-row-label">seq 2</div>
+          <div class="bin-track" style="max-width:26rem">
+            <div class="bin-seg seg-1" style="width:27%">R</div>
+            <div class="bin-seg seg-2" style="width:40%">P1</div>
+            <div class="bin-seg seg-5" style="width:27%">C1b</div>
+          </div>
+        </div>
+        <div class="seq-row">
+          <div class="seq-row-label">seq 3</div>
+          <div class="bin-track" style="max-width:26rem">
+            <div class="bin-seg seg-1" style="width:33%">R</div>
+            <div class="bin-seg seg-8" style="width:67%">C3</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tree-arrow">longest shared run, then split by next token, recursively &darr;</div>
+
+      <div class="tree-diagram">
+        <div class="tree-node-row">
+          <div class="tree-node seg-1">R</div>
+        </div>
+        <div class="tree-connector"></div>
+        <div class="tree-branch-row">
+          <div class="tree-children">
+            <div class="tree-child-branch">
+              <div class="tree-node seg-2">P1</div>
+              <div class="tree-connector"></div>
+              <div class="tree-children">
+                <div class="tree-child-branch"><div class="tree-node seg-4">C1a</div></div>
+                <div class="tree-child-branch"><div class="tree-node seg-5">C1b</div></div>
+              </div>
+            </div>
+            <div class="tree-child-branch">
+              <div class="tree-node seg-8">C3</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <figcaption>
+        <span class="key">R</span> is a shared root (say, a system prompt), <span class="key">P1</span>
+        is a task prompt shared by two completions, <span class="key">C1a</span>/<span class="key">C1b</span>/<span class="key">C3</span>
+        are each completion's unique tail. Seq 3 splits off right after <span class="key">R</span> &mdash;
+        we'll pack this same tree into rows later once a second, unrelated group joins it.
+      </figcaption>
+    </figure>
+
+    <h2>One tree, not one per group</h2>
+
+    <p>
+      The obvious boundary to draw is one tree per RL group &mdash; that's where shared
+      prefixes are supposed to live. ART draws no such boundary. Every tokenized
+      completion queued for a training step, regardless of which group or task it came
+      from, walks into one tree together. A system prompt repeated across ten unrelated
+      tasks becomes one shared root the same way a GRPO group's prompt does; the walk
+      doesn't know or care that they're &ldquo;different groups&rdquo; &mdash; it only
+      knows token sequences. The same goes for a handful of SFT completions distilled
+      from one source, or a batch of eval rollouts replaying the same tool schema: none
+      of it needs a group in the RL sense to benefit from the tree.
+    </p>
+
+    <p>
+      The cost of that generality is that the tree's leaves no longer line up with
+      fixed-length rows on their own &mdash; trees now span the whole batch and vary
+      enormously in size, so you can't just declare &ldquo;this tree is one packed
+      row.&rdquo; Deciding which leaves land in which row becomes bin packing: partition
+      a set of items with individual costs into the fewest fixed-capacity bins. Drawing
+      an arbitrary tree-per-group boundary would have sidestepped that problem
+      entirely, at the price of every shared prefix that happens to fall on the wrong
+      side of the boundary. ART takes the trade the other way: pay for a real
+      (NP-hard) bin-packing pass, get back every sharing opportunity actually present
+      in the batch.
+    </p>
+
+    <div class="aside">
+      <p>
+        That trade is measurable. Packing a synthetic batch of 53 groups (48 RL groups
+        plus 5 SFT-style groups, all sharing one 350-token system prompt) needs
+        <span class="result-inline">77</span> packed rows with one global tree, versus
+        <span class="result-inline">82</span> rows if the tree is built independently
+        per group and only <em>then</em> bin-packed &mdash; six percent more rows purely
+        from where the sharing boundary was drawn, before the bin-packing heuristic even
+        runs. Full numbers, including the no-sharing baseline, are at the end.
+      </p>
+    </div>
+
+    <p>
+      The same global-tree-then-bin-pack computation gets reused for planning, too.
+      ART's pipeline autotuner estimates how many packed rows a candidate set of groups
+      would need by running this exact tree-and-bin-pack pass over sampled subsets,
+      before ever committing to a training step's batch composition &mdash; the same
+      machinery that packs a step also gets asked &ldquo;what if&rdquo; questions about
+      how to build the next one.
+    </p>
+
+    <h2>Bin packing, with a twist</h2>
+
+    <p>
+      Bin packing &mdash; fixed-size items, fixed-capacity bins, minimize bins used
+      &mdash; is one of the oldest NP-hard problems around, so which heuristic to reach
+      for is a real decision, not an afterthought. First-fit and best-fit decreasing are
+      the standard practical answers: sort items largest-first, then drop each one into
+      whichever open bin leaves the least leftover space (opening a new bin only if
+      nothing fits). ART uses a best-fit-decreasing variant.
+    </p>
+
+    <p>
+      But the tree changes what &ldquo;item size&rdquo; even means. A leaf's total
+      token count is fixed, but its <em>marginal</em> cost of joining a particular bin
+      is not: any segment that bin already contains &mdash; because a sibling landed
+      there first &mdash; is free. Classical bin packing has no notion of one item
+      making another cheaper. Here it's the whole point.
+    </p>
+
+    <pre><code>class _PrefixTreeBin:
+    def __init__(self):
+        self.leaves = []
+        self.occupied_segments = set()
+        self.token_count = 0
+
+    def insertion_delta(self, leaf):
+        return sum(
+            length for segment_id, length in leaf.segment_path
+            if segment_id not in self.occupied_segments
+        )
+
+    def add(self, leaf):
+        self.token_count += self.insertion_delta(leaf)
+        self.occupied_segments.update(sid for sid, _ in leaf.segment_path)
+        self.leaves.append(leaf)
+
+
+def _place_prefix_tree_leaves(groups, *, seq_len):
+    ordered = sorted(groups, key=lambda g: max(leaf.empty_bin_cost for leaf in g),
+                      reverse=True)
+    bins = []
+    for leaf in (leaf for group in ordered for leaf in group):
+        best_bin, best_remaining = None, seq_len + 1
+        for candidate in bins:
+            count = candidate.token_count + candidate.insertion_delta(leaf)
+            if count &lt;= seq_len and seq_len - count &lt; best_remaining:
+                best_bin, best_remaining = candidate, seq_len - count
+        if best_bin is None:
+            best_bin = _PrefixTreeBin()
+            bins.append(best_bin)
+        best_bin.add(leaf)
+    return bins</code></pre>
+
+    <p>
+      Trimmed directly from ART's <code>preprocessing/pack.py</code> &mdash; a leaf's
+      <code>segment_path</code> is the list of <code>(segment_id, length)</code> pairs
+      on its root-to-leaf path in the global tree, and <code>empty_bin_cost</code> is
+      its full, unshared length. Everything else is ordinary best-fit-decreasing;
+      <code>insertion_delta</code> is the only place the tree shows up at all.
+    </p>
+
+    <p>Step through it on the tree from the last section, plus a second, unrelated group:</p>
+
+    <div class="card bin-demo" id="bin-demo">
+      <h5>Leaves (queue order = groups sorted by their most expensive leaf, descending)</h5>
+      <div class="bin-demo-queue"></div>
+      <h5>Rows opened so far</h5>
+      <div class="bin-demo-bins"></div>
+      <div class="bin-demo-controls">
+        <button class="bin-demo-prev">&larr; Prev</button>
+        <button class="bin-demo-next">Next &rarr;</button>
+        <button class="bin-demo-reset">Reset</button>
+        <span class="bin-demo-step-label"></span>
+      </div>
+      <div class="bin-demo-readout"></div>
+      <div class="bin-demo-legend">
+        <span class="legend-item"><span class="legend-swatch seg-1"></span>R &mdash; system prompt (200 tok)</span>
+        <span class="legend-item"><span class="legend-swatch seg-2"></span>P1 &mdash; group 1 prompt (300 tok)</span>
+        <span class="legend-item"><span class="legend-swatch seg-3"></span>P2 &mdash; group 2 prompt (250 tok)</span>
+        <span class="legend-item"><span class="legend-swatch seg-4"></span>C1a (150 tok)</span>
+        <span class="legend-item"><span class="legend-swatch seg-5"></span>C1b (200 tok)</span>
+        <span class="legend-item"><span class="legend-swatch seg-6"></span>C2a (180 tok)</span>
+        <span class="legend-item"><span class="legend-swatch seg-7"></span>C2b (220 tok)</span>
+        <span class="legend-item"><span class="legend-swatch seg-8"></span>C3 &mdash; unrelated group, no shared task prompt (400 tok)</span>
+      </div>
+    </div>
+    <p class="note">
+      A small hand-picked example (row capacity 1000 tok) &mdash; the real measured
+      numbers are at the end. Every completion here happens to cost more than half a
+      row on its own, so no arrangement of <em>raw</em>, unshared completions could
+      ever fit two per row; every row saved below comes from the tree, not from
+      cleverer bin packing.
+    </p>
+
+    <h2>Token-mixing layers</h2>
+
+    <p>
+      Packing only pays off if whatever mixes tokens actually respects the tree
+      &mdash; a token may attend only to its own ancestor chain, never a sibling
+      branch or an unrelated tree packed into the same row.
+    </p>
+
+    <p>
+      For ordinary masked attention this is nearly free. A token's visible set
+      decomposes into one fully-visible block per ancestor segment, plus a causal
+      triangle over its own segment &mdash; exactly the two primitive shapes
+      flash/flex-attention kernels already special-case, so most blocks in a packed
+      row are skipped entirely as empty and the rest need no bespoke masking logic.
+    </p>
+
+    <figure class="card attn-figure">
+      <div class="attn-grid-wrap">
+        <div class="attn-grid">
+          <!-- q=0 -->
+          <div class="attn-cell seg-1"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div>
+          <!-- q=1 -->
+          <div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div>
+          <!-- q=2 -->
+          <div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div>
+          <!-- q=3 -->
+          <div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell seg-2"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div>
+          <!-- q=4 -->
+          <div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell seg-2"></div><div class="attn-cell seg-2"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div>
+          <!-- q=5 -->
+          <div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell seg-2"></div><div class="attn-cell seg-2"></div><div class="attn-cell seg-2"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div>
+          <!-- q=6 -->
+          <div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell seg-3"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div>
+          <!-- q=7 (highlighted example query) -->
+          <div class="attn-cell seg-1 query-row"></div><div class="attn-cell seg-1 query-row"></div><div class="attn-cell seg-1 query-row"></div><div class="attn-cell masked query-row"></div><div class="attn-cell masked query-row"></div><div class="attn-cell masked query-row"></div><div class="attn-cell seg-3 query-row"></div><div class="attn-cell seg-3 query-row"></div><div class="attn-cell masked query-row"></div>
+          <!-- q=8 -->
+          <div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell seg-1"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell masked"></div><div class="attn-cell seg-3"></div><div class="attn-cell seg-3"></div><div class="attn-cell seg-3"></div>
+        </div>
+        <div class="attn-legend">
+          <div class="attn-legend-item"><span class="attn-swatch seg-1"></span>R (root, ancestor of everyone)</div>
+          <div class="attn-legend-item"><span class="attn-swatch seg-2"></span>branch A, causal self-block</div>
+          <div class="attn-legend-item"><span class="attn-swatch seg-3"></span>branch B, causal self-block</div>
+          <div class="attn-legend-item"><span class="attn-swatch" style="background:transparent;border:1px dashed var(--hairline)"></span>masked (sibling / not yet seen)</div>
+          <p style="margin-top:.4rem">
+            Rows/columns 0&ndash;2 are R, 3&ndash;5 are branch A, 6&ndash;8 are branch B
+            (sibling of A). The outlined row is query position 7 in branch B: it sees
+            all of R (a full block, since R fully precedes it) and its own branch
+            causally up to itself &mdash; never branch A.
+          </p>
+        </div>
+      </div>
+    </figure>
+
+    <p>
+      ART's sparse top-k indexer attention variants (GLM-5.2- and DeepSeek-V4-style)
+      don't compute a mask at all &mdash; they pick a fixed top-k of keys per query.
+      But the same ancestor-chain test still applies; it just gets baked into the
+      candidate-index construction instead of a block mask, using the same
+      pre-order/exit-order interval check on the tree, so no new attention math is
+      needed there either.
+    </p>
+
+    <p>
+      GDN (Gated DeltaNet) is the layer that actually needs new work. It's recurrent
+      &mdash; there's no mask to compute, only a running state that has to be threaded
+      token by token, forked once per branch point, and reset at every tree root.
+      ART's GDN planner walks the tree depth by depth; at each depth, every segment
+      across every tree in the packed batch &mdash; regardless of which row or group it
+      came from &mdash; gets coalesced into exactly two kernel calls: one varlen causal-conv
+      call and one varlen delta-rule call, using the same flash-style
+      <code>cu_seqlens</code> layout an unpacked batch would use.
+    </p>
+
+    <pre><code># the shape of it: one pass per tree depth, two kernel calls per pass
+state_cache = {}
+for depth, bucket in enumerate(tree_segment_buckets_by_depth):
+    init_conv, init_state = fork_parent_states(bucket, state_cache)   # zero-copy expand
+    conv_out = causal_conv1d_varlen(bucket.qkv, init_conv, cu_seqlens=bucket.cu_seqlens)
+    rec_out  = chunk_gated_delta_rule(conv_out, init_state, cu_seqlens=bucket.cu_seqlens)
+    state_cache[bucket.family_indices] = (conv_out.final_state, rec_out.final_state)
+    scatter(rec_out, rows=bucket.row_indices, positions=bucket.position_indices)</code></pre>
+
+    <p>
+      A child's initial state is a zero-copy broadcast view of its parent's final
+      state &mdash; a plain <code>.expand()</code>, so autograd sums gradients from
+      multiple children back into it for free; root segments start from a zeroed
+      state. One wrinkle: the delta-rule kernel can only fork state cleanly at a fixed
+      chunk boundary (64 tokens), so a branch point whose length isn't a multiple of
+      64 gets its ragged tail replayed once per child &mdash; cheap, at most 63 extra
+      tokens per child. (This gets substantially hairier once context parallelism is
+      involved &mdash; cross-rank state exchange, chunk-boundary alignment across
+      ranks &mdash; but that's its own post.)
+    </p>
+
+    <h2>Metadata space first</h2>
+
+    <p>
+      None of the planning above touches a real tensor. Segment boundaries, group and
+      parent ids, bin assignments &mdash; the entire packing plan is computed over
+      plain integers: sequence indices and lengths. Only once a bin's final leaf set
+      is fixed does ART do a single materialization pass that slices real token ids,
+      logprobs, advantages, and (when present) MoE routing-replay data into the
+      packed tensors.
+    </p>
+
+    <div class="card flow-figure">
+      <div class="flow-box">
+        <h4>Metadata plan</h4>
+        <p>segment ids, lengths, group/parent ids, bin assignment &mdash; integers only</p>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-box">
+        <h4>One materialization pass</h4>
+        <p>tokens, logprobs, advantages, routing replay &mdash; sliced into place exactly once</p>
+      </div>
+    </div>
+
+    <p>
+      Large per-token payloads, like MoE routing-replay bundles, are kept as lazy
+      segment lists until that pass and sliced exactly once each:
+    </p>
+
+    <pre><code>def iter_slices(self, start, end):
+    slices, offset = [], 0
+    for segment in self.segments:
+        segment_end = offset + segment.shape[0]
+        overlap_start, overlap_end = max(start, offset), min(end, segment_end)
+        if overlap_start &lt; overlap_end:
+            slices.append((overlap_start, segment[overlap_start - offset : overlap_end - offset]))
+        offset = segment_end
+        if offset &gt;= end:
+            break
+    return tuple(slices)</code></pre>
+
+    <p>
+      And the plan is checked, not just hoped: after placement, ART rebuilds each row's
+      tree locally and asserts it matches the token count computed during global
+      bin-packing before ever writing a tensor &mdash; a global-occupancy plan and a
+      bin-local rebuild have to agree, or packing raises rather than silently drifting.
+    </p>
+
+    <h2>Does it actually help?</h2>
+
+    <p>
+      Numbers below are from running ART's real packing code
+      (<code>_place_prefix_tree_leaves</code>, <code>prefix_tree_pack_segments</code>)
+      against a synthetic-but-realistic batch: 48 GRPO-style groups of 4&ndash;16
+      completions plus 5 SFT-style groups, all sharing one 350-token system prompt,
+      packed into 4096-token rows.
+    </p>
+
+    <figure class="card bench-figure">
+      <h5>Rows needed to pack 515 completions into 4096-token rows</h5>
+      <div class="bench-bars">
+        <div class="bench-bar-row">
+          <div class="bench-bar-label">no sharing (naive)</div>
+          <div class="bench-bar-track"><div class="bench-bar-fill" style="width:100%">147 rows</div></div>
+        </div>
+        <div class="bench-bar-row">
+          <div class="bench-bar-label">tree per group</div>
+          <div class="bench-bar-track"><div class="bench-bar-fill" style="width:55.8%">82 rows</div></div>
+        </div>
+        <div class="bench-bar-row">
+          <div class="bench-bar-label">one global tree (ART)</div>
+          <div class="bench-bar-track"><div class="bench-bar-fill" style="width:52.4%">77 rows</div></div>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <thead>
+          <tr><th>scenario</th><th>rows</th><th>physical tokens</th><th>vs. logical</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>logical (unpacked)</td><td>&mdash;</td><td>566,670</td><td>&mdash;</td></tr>
+          <tr><td>no sharing (naive best-fit)</td><td>147</td><td>566,670</td><td>0.0%</td></tr>
+          <tr><td>tree per group, then bin-pack</td><td>82</td><td>321,347</td><td>&minus;43.3%</td></tr>
+          <tr><td>one global tree, then bin-pack</td><td>77</td><td>307,604</td><td>&minus;45.7%</td></tr>
+        </tbody>
+      </table>
+      <p class="note">
+        Sharing at all cuts rows 44% (147 &rarr; 82). Refusing to draw a per-group
+        boundary &mdash; one global tree instead &mdash; buys another 6% fewer rows and
+        4.3% fewer physical tokens on top of that, for free, on this batch.
+      </p>
+    </figure>
+
+    <p>Planning cost, same code, on the same synthetic batch shape at increasing scale:</p>
+
+    <table class="data-table">
+      <thead>
+        <tr><th>groups</th><th>completions</th><th>tree walk</th><th>bin packing</th><th>rows</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>16</td><td>169</td><td>4.4 ms</td><td>1.0 ms</td><td>26</td></tr>
+        <tr><td>64</td><td>694</td><td>10.8 ms</td><td>12.3 ms</td><td>104</td></tr>
+        <tr><td>256</td><td>2,713</td><td>79.0 ms</td><td>171.8 ms</td><td>410</td></tr>
+        <tr><td>1,024</td><td>10,769</td><td>827.6 ms</td><td>2,676.0 ms</td><td>1,642</td></tr>
+      </tbody>
+    </table>
+    <p class="note">
+      The tree walk stays close to linear. The bin-packing pass doesn't &mdash; its
+      best-fit search checks every open bin for every leaf, so cost grows closer to
+      quadratic in leaf count. At the batch sizes ART actually trains with this is
+      well under a second; it's the part to watch if batch sizes grow by another
+      order of magnitude.
+    </p>
+
+    <p>
+      This covers everything above single-node execution. Making the same tree
+      survive being sliced across GPUs under context parallelism &mdash; where a
+      branch's tokens might not even live on the same rank as its parent &mdash; is a
+      large enough problem for its own post.
+    </p>
+
+    <footer class="site">FurtherAI</footer>
+  </div>
+  <script src="pack-diagram.js"></script>
+</body>
+</html>
