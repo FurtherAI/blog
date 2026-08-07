@@ -1,0 +1,265 @@
+/* Shared design system for FurtherAI's blog. Reused across every post. */
+
+:root {
+  color-scheme: light;
+  --surface-page:    #f9f9f7;
+  --surface-card:    #fcfcfb;
+  --surface-code:    #f2f1ec;
+  --text-primary:    #0b0b0b;
+  --text-secondary:  #52514e;
+  --text-muted:      #898781;
+  --hairline:        #e1e0d9;
+  --border:          rgba(11, 11, 11, 0.10);
+  --accent:          #2a78d6;
+
+  --series-1: #2a78d6; /* blue    */
+  --series-2: #eb6834; /* orange  */
+  --series-3: #1baf7a; /* aqua    */
+  --series-4: #eda100; /* yellow  */
+  --series-5: #e87ba4; /* magenta */
+  --series-6: #008300; /* green   */
+  --series-7: #4a3aa7; /* violet  */
+  --series-8: #e34948; /* red     */
+
+  --seq-100: #cde2fb; --seq-150: #b7d3f6; --seq-200: #9ec5f4; --seq-250: #86b6ef;
+  --seq-300: #6da7ec; --seq-350: #5598e7; --seq-400: #3987e5; --seq-450: #2a78d6;
+  --seq-500: #256abf; --seq-550: #1c5cab; --seq-600: #184f95; --seq-650: #104281;
+  --seq-700: #0d366b;
+
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --content-width: 42rem;
+  --wide-width: 60rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-page:   #0d0d0d;
+    --surface-card:   #1a1a19;
+    --surface-code:   #17201a;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --hairline:       #2c2c2a;
+    --border:         rgba(255, 255, 255, 0.10);
+    --accent:         #3987e5;
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+
+    --status-good: #0ca30c;
+    --status-warning: #fab219;
+    --status-serious: #ec835a;
+    --status-critical: #e66767;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-page:   #0d0d0d;
+  --surface-card:   #1a1a19;
+  --surface-code:   #17201a;
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #898781;
+  --hairline:       #2c2c2a;
+  --border:         rgba(255, 255, 255, 0.10);
+  --accent:         #3987e5;
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font-family: var(--serif);
+  font-size: 1.125rem;
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
+}
+
+.wrap {
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+.wrap-wide {
+  max-width: var(--wide-width);
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+header.site {
+  padding: 2.5rem 0 1.5rem;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 2.5rem;
+}
+
+header.site .brand {
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  color: var(--text-primary);
+}
+
+header.site .brand:hover { color: var(--accent); }
+
+header.site nav {
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  margin-top: 0.4rem;
+}
+
+header.site nav a {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+header.site nav a:hover { color: var(--accent); }
+
+h1, h2, h3, h4 {
+  font-family: var(--serif);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+
+h1 { font-size: 2.1rem; margin: 0 0 0.5rem; }
+h2 { font-size: 1.5rem; margin: 2.75rem 0 1rem; }
+h3 {
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin: 2rem 0 0.75rem;
+}
+
+p { margin: 0 0 1.25rem; }
+
+a { color: var(--accent); }
+
+.dek {
+  font-family: var(--sans);
+  color: var(--text-secondary);
+  font-size: 1.05rem;
+  margin: 0 0 1rem;
+}
+
+.meta {
+  font-family: var(--sans);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin: 0 0 2.5rem;
+}
+
+code, pre {
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+
+code {
+  background: var(--surface-code);
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+}
+
+pre {
+  background: var(--surface-code);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  overflow-x: auto;
+  line-height: 1.55;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+figure {
+  margin: 2.25rem 0;
+}
+
+figure.wide {
+  margin-left: calc((var(--content-width) - var(--wide-width)) / 2);
+  margin-right: calc((var(--content-width) - var(--wide-width)) / 2);
+}
+
+@media (max-width: 62rem) {
+  figure.wide { margin-left: 0; margin-right: 0; }
+}
+
+figcaption {
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 0.6rem;
+  line-height: 1.5;
+}
+
+figcaption .key { color: var(--text-secondary); }
+
+.card {
+  background: var(--surface-card);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+}
+
+.tk-label {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+blockquote {
+  margin: 1.5rem 0;
+  padding-left: 1.1rem;
+  border-left: 2px solid var(--hairline);
+  color: var(--text-secondary);
+}
+
+hr.rule {
+  border: none;
+  border-top: 1px solid var(--hairline);
+  margin: 3rem 0;
+}
+
+footer.site {
+  margin-top: 4rem;
+  padding: 2rem 0 3rem;
+  border-top: 1px solid var(--hairline);
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
