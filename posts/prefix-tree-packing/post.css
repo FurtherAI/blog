@@ -85,6 +85,10 @@
 
 .tree-figure .seq-group { display: flex; flex-direction: column; gap: 0.5rem; }
 
+/* widths are set inline per-row, proportional to a shared token scale, so the
+   same segment (e.g. R) lines up at the same pixel width across rows */
+.tree-figure .bin-track { flex: 0 0 auto; }
+
 .seq-row { display: flex; align-items: center; gap: 0.6rem; }
 
 .seq-row-label {

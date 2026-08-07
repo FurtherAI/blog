@@ -34,12 +34,12 @@
     <p class="byline">August 2026 &middot; ART / Megatron</p>
 
     <p>
-      A training batch has a lot of accidental structure: many completions per prompt
+      A training batch has a lot of structure: many completions per prompt
       in a GRPO or CISPO group, a system prompt repeated across otherwise-unrelated
       tasks, several SFT completions distilled from one source. Whenever two sequences
-      in the batch share a token prefix, encoding that prefix twice is wasted compute.
+      in the batch share a token prefix, encoding that prefix twice is wasted compute for any token mixing layers that are causal.
       ART packs the batch as a radix tree instead of a list of sequences, then solves
-      a bin-packing problem to fit that tree into fixed-length training rows.
+      a bin-packing problem to fit that tree into fixed-length training rows (the fixed length has a maximum set by the available VRAM, which is usually what you're configuring it to for highest MFU, but you may choose to keep it smaller for sample efficiency).
     </p>
 
     <h2>The tree</h2>
@@ -69,39 +69,44 @@
 
     <p>
       That's the shape of it, simplified from ART's actual walk in
-      <code>prefix_tree_packing.py</code>. Two refinements matter in practice. First, a
+      <code>prefix_tree_packing.py</code>. Two refinements matter in practice. 
+      <br>
+      First, a
       configurable minimum shared-segment length (64 tokens by default) keeps the tree
       from paying attention-kernel and bookkeeping overhead to share a handful of
-      tokens. Second, sharing never crosses into a token that must be trained on
-      independently &mdash; each branch keeps one duplicated, non-trainable context
+      tokens. 
+      <br>
+      Second, sharing currently excludes trainable tokens for simplicity of loss computation. Trainable tokens likely have different advantages and the advantage tensor is the same length as the token ids tensor (matching to their respective tokens), so you can't overlap trainable tokens without changing how this is handled. I have an idea for generalizing the losses/algorithms in ART and how to support prefix tree packing on that which will replace this and probably allow sharing trainable tokens, which I'll get to in the next month or so. 
+      <br>
+      Finally, an off-by-one note, each branch keeps one duplicated, non-trainable context
       token right at its join point, so it still gets its own next-token query
       position when the model is asked to predict the first token that's actually
-      unique to it.
+      unique to the branch, since it will have a unique loss.
     </p>
 
     <figure class="card tree-figure">
       <div class="seq-group">
         <div class="seq-row">
           <div class="seq-row-label">seq 1</div>
-          <div class="bin-track" style="max-width:26rem">
-            <div class="bin-seg seg-1" style="width:29%">R</div>
-            <div class="bin-seg seg-2" style="width:43%">P1</div>
-            <div class="bin-seg seg-4" style="width:21%">C1a</div>
+          <div class="bin-track" style="width:24.14rem">
+            <div class="bin-seg seg-1" style="width:30.77%">R</div>
+            <div class="bin-seg seg-2" style="width:46.15%">P1</div>
+            <div class="bin-seg seg-4" style="width:23.08%">C1a</div>
           </div>
         </div>
         <div class="seq-row">
           <div class="seq-row-label">seq 2</div>
-          <div class="bin-track" style="max-width:26rem">
-            <div class="bin-seg seg-1" style="width:27%">R</div>
-            <div class="bin-seg seg-2" style="width:40%">P1</div>
-            <div class="bin-seg seg-5" style="width:27%">C1b</div>
+          <div class="bin-track" style="width:26rem">
+            <div class="bin-seg seg-1" style="width:28.57%">R</div>
+            <div class="bin-seg seg-2" style="width:42.86%">P1</div>
+            <div class="bin-seg seg-5" style="width:28.57%">C1b</div>
           </div>
         </div>
         <div class="seq-row">
           <div class="seq-row-label">seq 3</div>
-          <div class="bin-track" style="max-width:26rem">
-            <div class="bin-seg seg-1" style="width:33%">R</div>
-            <div class="bin-seg seg-8" style="width:67%">C3</div>
+          <div class="bin-track" style="width:22.29rem">
+            <div class="bin-seg seg-1" style="width:33.33%">R</div>
+            <div class="bin-seg seg-8" style="width:66.67%">C3</div>
           </div>
         </div>
       </div>
