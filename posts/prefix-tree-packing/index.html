@@ -474,7 +474,10 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
       </table>
       <p class="note">
         Each row also pays for the 4,096-token system/tool root once. Prefix and
-        completion lengths exclude that common root.
+        completion lengths exclude that common root. For next-token loss alignment,
+        ART leaves the final prompt token on each rollout leaf: the exact physical
+        accounting is therefore 11,999 shared group-prefix tokens plus
+        completion-length + 1 tokens per rollout.
       </p>
 
       <div class="bench-bars">
@@ -496,8 +499,8 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
           <tr><td>in-order row 1</td><td>short A + short B + half of long</td><td>120,113 / 131,072</td></tr>
           <tr><td>in-order row 2</td><td>remaining long + 7 medium</td><td>125,105 / 131,072</td></tr>
           <tr><td>in-order row 3</td><td>final medium rollout</td><td>23,096 / 131,072</td></tr>
-          <tr><td>global row 1</td><td>long + 1 medium</td><td>130,105 / 131,072</td></tr>
-          <tr><td>global row 2</td><td>remaining medium + short A + short B</td><td>122,114 / 131,072</td></tr>
+          <tr><td>global row 1</td><td>long + 3 short A</td><td>130,105 / 131,072</td></tr>
+          <tr><td>global row 2</td><td>medium + 5 short A + short B</td><td>122,114 / 131,072</td></tr>
         </tbody>
       </table>
       <p class="note">
