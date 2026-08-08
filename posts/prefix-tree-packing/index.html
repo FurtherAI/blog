@@ -379,6 +379,10 @@ def _place_prefix_tree_leaves(groups, *, seq_len):
       <code>cu_seqlens</code> layout an unpacked batch would use.
     </p>
 
+    <p>
+      Codex can handle this kind of work, writing custom kernels and efficient work between kernels pretty well when it has built a solid set of input shapes (workloads) and precise profiling, otherwise I probably wouldn't be building this.
+    </p>
+
     <pre><code># the shape of it: one pass per tree depth, two kernel calls per pass
 state_cache = {}
 for depth, bucket in enumerate(tree_segment_buckets_by_depth):
@@ -425,7 +429,7 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
 
     <p>
       Large per-token payloads, like MoE routing-replay bundles, are kept as lazy
-      segment lists until that pass and sliced exactly once each:
+      segment lists until that pass and sliced exactly once each.
     </p>
 
     <h2>Does it actually help?</h2>
@@ -442,13 +446,16 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
     </p>
 
     <p>
-      Worth knowing what came before, too. The original version (we called it
+      Worth knowing what came before, too. The very first version (we called it
       &ldquo;shared prefix,&rdquo; not &ldquo;prefix tree,&rdquo; since sharing was
-      exactly one level deep and scoped to a single RL group) deduplicated the largest prompt shared by a trajectory group. This goes pretty far for GRPO, but doesn't cover any of the tree structured cases.
-      The initial version was in-order, one-row-at-a-time filling until the row was full, and it rebuilt a
-      real multi-segment tree fresh for whatever already happened to be in the
-      current row &mdash; measured below as
-      &ldquo;original in-order tree.&rdquo; I note this version simply to give some vision on alternatives you might build.
+      exactly one level deep and scoped to a single RL group) deduplicated the
+      largest prompt shared by a trajectory group &mdash; that goes pretty far for
+      GRPO, but doesn't cover any of the tree structured cases above. The version
+      that replaced it kept the same in-order, one-row-at-a-time filling until the
+      row was full, but rebuilt a real multi-segment tree fresh for whatever
+      already happened to be in the current row &mdash; measured below as
+      &ldquo;original in-order tree.&rdquo; I note the very first version simply to
+      give some vision on alternatives you might build.
     </p>
 
     <figure class="card bench-figure">
@@ -532,10 +539,7 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
     </p>
 
     <p>
-      This covers everything above single-node execution. Making the same tree
-      survive being sliced across GPUs under context parallelism &mdash; where a
-      branch's tokens might not even live on the same rank as its parent &mdash; is a
-      large enough problem for its own post.
+      The overall idea for prefix tree packing is pretty simple, just some neat connections to classical problems here in a cool place. And the benefits can be very substantial. Despite that, only a few other open source RL frameworks implement it, VeRL with a plugin and AReaL that codex could find and I don't believe those support it for layers such as GDN. So, ART is probably the most advanced open version of this.
     </p>
 
     <h2 id="appendix">Appendix: this isn't quite bin packing</h2>
