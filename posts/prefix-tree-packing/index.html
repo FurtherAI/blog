@@ -182,7 +182,7 @@
     <p>
       The same global-tree-then-bin-pack computation gets reused for planning, too.
       ART's pipeline autotuner estimates how many packed rows a candidate set of groups
-      would need by running this exact tree-and-bin-pack pass over sampled subsets,
+      would need by running this exact tree-and-bin-pack pass over sampled subsets (this is a pretty fast function),
       before ever committing to a training step's batch composition &mdash; the same
       machinery that packs a step also gets asked &ldquo;what if&rdquo; questions about
       how to build the next one.
@@ -193,7 +193,7 @@
     <p>
       Bin packing &mdash; fixed-size items, fixed-capacity bins, minimize bins used
       &mdash; is one of the oldest NP-hard problems around, so which heuristic to reach
-      for is a real decision, not an afterthought. First-fit and best-fit decreasing are
+      for is a real decision, not an afterthought (Claude's words, honestly probably not that important to most inputs, but fun to think about and nice to choose something pretty general). First-fit and best-fit decreasing are
       the standard practical answers: sort items largest-first, then drop each one into
       whichever open bin leaves the least leftover space (opening a new bin only if
       nothing fits). ART uses a best-fit-decreasing variant.
@@ -250,13 +250,17 @@ def _place_prefix_tree_leaves(groups, *, seq_len):
     </p>
 
     <p>
-      Step through it on the tree from the last section, plus a second, unrelated
-      group. This is a schematic example, not a realistic one &mdash; real packed
-      rows hold thousands of tokens and far more than three trees at once (that's
-      what the measured batch at the end is for). Everything here is scaled down
-      to whatever makes best-fit-decreasing's actual decisions visible one leaf
-      at a time:
+      Worth being honest about: once item cost depends on what's already in the bin,
+      this isn't bin packing in the strict textbook sense any more &mdash; the classical
+      proofs behind first-fit and best-fit decreasing assume fixed item sizes. It's
+      still NP-hard, and best-fit-decreasing over the real marginal cost is a principled
+      thing to do, but it doesn't inherit the same tight approximation guarantee as its
+      fixed-size ancestor. If you want the precise framing (and where a more
+      principled algorithm might come from), see the
+      <a href="#appendix">appendix</a>.
     </p>
+
+    <p>Step through it on the tree from the last section, plus a second, unrelated group:</p>
 
     <div class="card bin-demo" id="bin-demo">
       <h5>Leaves (queue order = groups sorted by their most expensive leaf, descending)</h5>
@@ -282,11 +286,11 @@ def _place_prefix_tree_leaves(groups, *, seq_len):
       </div>
     </div>
     <p class="note">
-      Row capacity here is 1,000 (vs. 4,096 in the real run below) purely so five
-      completions are enough to force multiple rows. At this shrunk-down scale every
-      completion happens to cost more than half a row on its own, so no arrangement
-      of <em>raw</em>, unshared completions could ever fit two per row &mdash; every
-      row saved below comes from the tree, not from cleverer bin packing.
+      A small hand-picked example (row capacity 1000 tok) &mdash; the real measured
+      numbers are at the end. Every completion here happens to cost more than half a
+      row on its own, so no arrangement of <em>raw</em>, unshared completions could
+      ever fit two per row; every row saved below comes from the tree, not from
+      cleverer bin packing.
     </p>
 
     <h2>Token-mixing layers</h2>
@@ -501,6 +505,79 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
       survive being sliced across GPUs under context parallelism &mdash; where a
       branch's tokens might not even live on the same rank as its parent &mdash; is a
       large enough problem for its own post.
+    </p>
+
+    <h2 id="appendix">Appendix: this isn't quite bin packing</h2>
+
+    <p>
+      Classical bin packing &mdash; fixed-size items, fixed-capacity bins, minimize bins
+      used &mdash; assumes an item's cost doesn't depend on what else shares its bin.
+      ART's version doesn't have that property: a leaf's marginal cost of joining a bin
+      is <code>insertion_delta</code>, which depends on which segments that bin already
+      contains. That changes what &ldquo;item size&rdquo; means, so it's worth being
+      precise about what's preserved and what isn't.
+    </p>
+
+    <h3>Still NP-hard</h3>
+    <p>
+      Any classical bin-packing instance embeds trivially: give every item its own
+      private segment, shared with nothing. <code>insertion_delta</code> then reduces
+      to plain fixed item size, and tree-packing specializes exactly to ordinary bin
+      packing. The reduction is immediate; the decision problem stays NP-complete.
+    </p>
+
+    <h3>What the cost structure actually is</h3>
+    <p>
+      A bin's occupied-token count is the size of the union of every segment
+      referenced by its assigned leaves. Union-size is a monotone submodular
+      (coverage) function of the assigned set: it never decreases as leaves are
+      added, and the marginal gain of adding one more leaf &mdash; exactly
+      <code>insertion_delta</code> &mdash; can only shrink as more leaves that already
+      cover its segments get added first. So the precise statement of the problem is
+      bin packing where each bin's load is a monotone submodular function of its
+      assigned set, not an additive sum of fixed sizes.
+    </p>
+
+    <h3>Why the classical guarantee doesn't transfer</h3>
+    <p>
+      The worst-case bounds for first-fit and best-fit decreasing
+      (&sim;11/9&middot;OPT + O(1)) are proved with arguments that lean on
+      additivity &mdash; pairing up under-full bins, volume-counting against total
+      item size. Those proofs don't carry over to a submodular load function.
+      Submodularity does give subadditivity (f(S&cup;T) &le; f(S) + f(T)), enough to
+      recover <em>some</em> constant-factor bound via a similar volume argument, but a
+      looser one than the tight classical result. Best-fit-decreasing over true
+      marginal cost is a principled generalization of the standard heuristic, not one
+      with a matching proof of near-optimality.
+    </p>
+
+    <h3>Where the heuristic leaves value on the table</h3>
+    <p>
+      Sorting leaves by <code>empty_bin_cost</code> &mdash; standalone, worst-case size
+      &mdash; is the natural analogue of &ldquo;decreasing,&rdquo; but it's blind to
+      shareability. Two leaves can have identical standalone cost while one shares
+      heavily with whatever's already placed and the other shares nothing;
+      cost-sorting alone can't tell them apart, only the online best-fit search
+      discovers the difference after the fact. Keeping sibling leaves adjacent in the
+      placement order (grouping by originating tree-family, ordering families by
+      their most expensive member) is a partial mitigation, not a fix for the
+      ordering problem itself.
+    </p>
+
+    <h3>More principled directions (untested)</h3>
+    <p>
+      No proven superior ratio for this exact problem shape is being claimed here
+      &mdash; these are just plausible next places to look: a placement score that
+      weighs segment overlap alongside remaining capacity, not best-fit alone;
+      walking the tree in a locality-preserving order (e.g. depth-first) so segment
+      reuse is discovered by construction instead of by luck of the best-fit search;
+      or borrowing from the submodular-cover literature (Wolsey's greedy
+      submodular-cover result gives a <code>1 + ln(max cost)</code>-type guarantee for
+      a related, though not identical, covering formulation). For a cost structure
+      this non-standard, the credible way to know whether any of these actually beats
+      what's here is the same way the numbers earlier in this post were produced
+      &mdash; measured on real or realistic batches, not reasoned out from bin-packing
+      theory alone.
     </p>
 
     <footer class="site">FurtherAI</footer>
