@@ -31,6 +31,21 @@
   --status-serious: #ec835a;
   --status-critical: #d03b3b;
 
+  /* Tokyo Glow has no light variant; these are darkened versions of the same
+     hues for contrast on a light surface, not a second real theme. */
+  --tok-comment:  #5b6494;
+  --tok-string:   #2f6690;
+  --tok-number:   #3c4f9e;
+  --tok-name:     #3c4f9e;
+  --tok-funcname: #3b5bdb;
+  --tok-classname:#2f6690;
+  --tok-self:     #1c7fb0;
+  --tok-boolnone: #0f7a7f;
+  --tok-keyword:  #0e7c9e;
+  --tok-cmpop:    #3c4f9e;
+  --tok-bracket:  #5a72c4;
+  --tok-plain:    #52514e;
+
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
   --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
@@ -44,7 +59,20 @@
     color-scheme: dark;
     --surface-page:   #0d0d0d;
     --surface-card:   #1a1a19;
-    --surface-code:   #17201a;
+    --surface-code:   #1a1b26;
+
+    --tok-comment:  #7d89ce;
+    --tok-string:   #6496c8;
+    --tok-number:   #c0caf5;
+    --tok-name:     #c0caf5;
+    --tok-funcname: #7aa2f7;
+    --tok-classname:#6496c8;
+    --tok-self:     #3ca2d5;
+    --tok-boolnone: #41a6b5;
+    --tok-keyword:  #89ddff;
+    --tok-cmpop:    #c0caf5;
+    --tok-bracket:  #9abdf5;
+    --tok-plain:    #a9b1d6;
     --text-primary:   #ffffff;
     --text-secondary: #c3c2b7;
     --text-muted:     #898781;
@@ -72,7 +100,20 @@
   color-scheme: dark;
   --surface-page:   #0d0d0d;
   --surface-card:   #1a1a19;
-  --surface-code:   #17201a;
+  --surface-code:   #1a1b26;
+
+  --tok-comment:  #7d89ce;
+  --tok-string:   #6496c8;
+  --tok-number:   #c0caf5;
+  --tok-name:     #c0caf5;
+  --tok-funcname: #7aa2f7;
+  --tok-classname:#6496c8;
+  --tok-self:     #3ca2d5;
+  --tok-boolnone: #41a6b5;
+  --tok-keyword:  #89ddff;
+  --tok-cmpop:    #c0caf5;
+  --tok-bracket:  #9abdf5;
+  --tok-plain:    #a9b1d6;
   --text-primary:   #ffffff;
   --text-secondary: #c3c2b7;
   --text-muted:     #898781;
@@ -206,7 +247,21 @@ pre code {
   background: none;
   padding: 0;
   border-radius: 0;
+  color: var(--tok-plain);
 }
+
+/* Python syntax highlighting, from a personal "Tokyo Glow" configuration */
+.tok-comment   { color: var(--tok-comment); font-style: italic; }
+.tok-string    { color: var(--tok-string); }
+.tok-number    { color: var(--tok-number); }
+.tok-name      { color: var(--tok-name); }
+.tok-funcname  { color: var(--tok-funcname); }
+.tok-classname { color: var(--tok-classname); }
+.tok-self      { color: var(--tok-self); }
+.tok-boolnone  { color: var(--tok-boolnone); }
+.tok-keyword   { color: var(--tok-keyword); }
+.tok-cmpop     { color: var(--tok-cmpop); }
+.tok-bracket   { color: var(--tok-bracket); }
 
 figure {
   margin: 2.25rem 0;

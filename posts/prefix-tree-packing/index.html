@@ -361,20 +361,20 @@ def _place_prefix_tree_leaves(groups, *, seq_len):
       attention kernels (<code>sparse_mla</code>, <code>sparse_attn_tilelang</code>)
       already just gather and attend over whatever key/value indices they're handed,
       because that's what top-k sparse attention over long context looks like whether
-      or not anything is packed. So the kernel doesn't change here either. All the
+      or not anything is packed. So the kernel doesn't actually have to change here (nice not to have to work on this). All the
       tree-awareness lives one level up, in the indexer: it only ever scores or
       constructs candidates from a query's actual ancestor chain, using the same
-      pre-order/exit-order interval check as the mask above, so a sibling branch's
+      pre-order/exit-order (these words relate to how the mask is constructed, from a DFS, an increasing int is assigned, you can check your ancestors by an [enter, exit] interval) interval check as the mask above, so a sibling branch's
       keys are never even proposed, let alone selected.
     </p>
 
     <p>
-      GDN (Gated DeltaNet) is the layer that actually needs new work. It's recurrent
+      GDN (Gated DeltaNet) is the layer that needs a more significant change. It's recurrent
       &mdash; there's no mask to compute, only a running state that has to be threaded
       token by token, forked once per branch point, and reset at every tree root.
       ART's GDN planner walks the tree depth by depth; at each depth, every segment
       across every tree in the packed batch &mdash; regardless of which row or group it
-      came from &mdash; gets coalesced into exactly two kernel calls: one varlen causal-conv
+      came from &mdash; gets coalesced into two kernel calls: one varlen causal-conv
       call and one varlen delta-rule call, using the same flash-style
       <code>cu_seqlens</code> layout an unpacked batch would use.
     </p>
@@ -397,7 +397,7 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
       64 gets its ragged tail replayed once per child &mdash; cheap, at most 63 extra
       tokens per child. (This gets substantially hairier once context parallelism is
       involved &mdash; cross-rank state exchange, chunk-boundary alignment across
-      ranks &mdash; but that's its own post.)
+      ranks &mdash; but we'll discuss some of that in a future CP post.)
     </p>
 
     <h2>Metadata space first</h2>
@@ -428,25 +428,6 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
       segment lists until that pass and sliced exactly once each:
     </p>
 
-    <pre><code>def iter_slices(self, start, end):
-    slices, offset = [], 0
-    for segment in self.segments:
-        segment_end = offset + segment.shape[0]
-        overlap_start, overlap_end = max(start, offset), min(end, segment_end)
-        if overlap_start &lt; overlap_end:
-            slices.append((overlap_start, segment[overlap_start - offset : overlap_end - offset]))
-        offset = segment_end
-        if offset &gt;= end:
-            break
-    return tuple(slices)</code></pre>
-
-    <p>
-      And the plan is checked, not just hoped: after placement, ART rebuilds each row's
-      tree locally and asserts it matches the token count computed during global
-      bin-packing before ever writing a tensor &mdash; a global-occupancy plan and a
-      bin-local rebuild have to agree, or packing raises rather than silently drifting.
-    </p>
-
     <h2>Does it actually help?</h2>
 
     <p>
@@ -461,12 +442,11 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
     <p>
       Worth knowing what came before, too. The original version (we called it
       &ldquo;shared prefix,&rdquo; not &ldquo;prefix tree,&rdquo; since sharing was
-      exactly one level deep and scoped to a single RL group) deduplicated one whole
-      group prompt at a time under simple in-order row filling. The version that
-      replaced it kept that same in-order, one-row-at-a-time filling, but rebuilt a
+      exactly one level deep and scoped to a single RL group) deduplicated the largest prompt shared by a trajectory group. This goes pretty far for GRPO, but doesn't cover any of the tree structured cases.
+      The initial version was in-order, one-row-at-a-time filling until the row was full, and it rebuilt a
       real multi-segment tree fresh for whatever already happened to be in the
-      current row &mdash; a real, shipped design, measured below as
-      &ldquo;restart-per-row.&rdquo;
+      current row &mdash; measured below as
+      &ldquo;restart-per-row.&rdquo; We note this 
     </p>
 
     <figure class="card bench-figure">
@@ -605,6 +585,7 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
 
     <footer class="site">FurtherAI</footer>
   </div>
+  <script src="../../assets/js/pyhighlight.js"></script>
   <script src="pack-diagram.js"></script>
 </body>
 </html>
