@@ -118,19 +118,17 @@
           <div class="tree-node seg-1">R</div>
         </div>
         <div class="tree-connector"></div>
-        <div class="tree-branch-row">
-          <div class="tree-children">
-            <div class="tree-child-branch">
-              <div class="tree-node seg-2">P1</div>
-              <div class="tree-connector"></div>
-              <div class="tree-children">
-                <div class="tree-child-branch"><div class="tree-node seg-4">C1a</div></div>
-                <div class="tree-child-branch"><div class="tree-node seg-5">C1b</div></div>
-              </div>
+        <div class="tree-children">
+          <div class="tree-child-branch">
+            <div class="tree-node seg-2">P1</div>
+            <div class="tree-connector"></div>
+            <div class="tree-children">
+              <div class="tree-child-branch"><div class="tree-node seg-4">C1a</div></div>
+              <div class="tree-child-branch"><div class="tree-node seg-5">C1b</div></div>
             </div>
-            <div class="tree-child-branch">
-              <div class="tree-node seg-8">C3</div>
-            </div>
+          </div>
+          <div class="tree-child-branch">
+            <div class="tree-node seg-8">C3</div>
           </div>
         </div>
       </div>
@@ -145,7 +143,7 @@
     <h2>One tree, not one per group</h2>
 
     <p>
-      The obvious boundary to draw is one tree per RL group &mdash; that's where shared
+      A simple boundary to draw is one tree per RL group &mdash; that's where shared
       prefixes are supposed to live. ART draws no such boundary. Every tokenized
       completion queued for a training step, regardless of which group or task it came
       from, walks into one tree together. A system prompt repeated across ten unrelated
@@ -154,17 +152,17 @@
       knows token sequences. The same goes for a handful of SFT completions distilled
       from one source, or a batch of eval rollouts replaying the same tool schema: none
       of it needs a group in the RL sense to benefit from the tree.
+      <br>
+      You can also just fill in the bins as you go, checking the size of the tree at each step, starting a new one when you can't fit the next trajectory. But it's a little more fun and there's a little more potential gain if you think about and solve it more generally.
     </p>
 
     <p>
-      The cost of that generality is that the tree's leaves no longer line up with
-      fixed-length rows on their own &mdash; trees now span the whole batch and vary
-      enormously in size, so you can't just declare &ldquo;this tree is one packed
-      row.&rdquo; Deciding which leaves land in which row becomes bin packing: partition
+      What comes with that generality is that deciding which leaves land in which row becomes bin packing: partition
       a set of items with individual costs into the fewest fixed-capacity bins. Drawing
       an arbitrary tree-per-group boundary would have sidestepped that problem
       entirely, at the price of every shared prefix that happens to fall on the wrong
-      side of the boundary. ART takes the trade the other way: pay for a real
+      side of the boundary. Alternatively, in-order is just a simple bin-packing heuristic.
+      ART takes the trade the other way: pay for a real
       (NP-hard) bin-packing pass, get back every sharing opportunity actually present
       in the batch.
     </p>
@@ -251,7 +249,14 @@ def _place_prefix_tree_leaves(groups, *, seq_len):
       <code>insertion_delta</code> is the only place the tree shows up at all.
     </p>
 
-    <p>Step through it on the tree from the last section, plus a second, unrelated group:</p>
+    <p>
+      Step through it on the tree from the last section, plus a second, unrelated
+      group. This is a schematic example, not a realistic one &mdash; real packed
+      rows hold thousands of tokens and far more than three trees at once (that's
+      what the measured batch at the end is for). Everything here is scaled down
+      to whatever makes best-fit-decreasing's actual decisions visible one leaf
+      at a time:
+    </p>
 
     <div class="card bin-demo" id="bin-demo">
       <h5>Leaves (queue order = groups sorted by their most expensive leaf, descending)</h5>
@@ -277,11 +282,11 @@ def _place_prefix_tree_leaves(groups, *, seq_len):
       </div>
     </div>
     <p class="note">
-      A small hand-picked example (row capacity 1000 tok) &mdash; the real measured
-      numbers are at the end. Every completion here happens to cost more than half a
-      row on its own, so no arrangement of <em>raw</em>, unshared completions could
-      ever fit two per row; every row saved below comes from the tree, not from
-      cleverer bin packing.
+      Row capacity here is 1,000 (vs. 4,096 in the real run below) purely so five
+      completions are enough to force multiple rows. At this shrunk-down scale every
+      completion happens to cost more than half a row on its own, so no arrangement
+      of <em>raw</em>, unshared completions could ever fit two per row &mdash; every
+      row saved below comes from the tree, not from cleverer bin packing.
     </p>
 
     <h2>Token-mixing layers</h2>
