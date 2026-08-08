@@ -1,19 +1,21 @@
 (function () {
   // Lightweight regex-based Python tokenizer, colored to match the site's
   // "Tokyo Glow" theme (base theme + personal token-color overrides).
+  // No lookbehind assertions here on purpose -- Safari didn't support them
+  // until 16.4 (2023), and a lookbehind in the pattern throws at construction
+  // time, silently killing this whole script in older browsers.
   // Order matters: earlier alternatives win at a given position.
   var TOKEN_RE = new RegExp(
     [
       "(?<comment>#[^\\n]*)",
       "(?<string>[rRbBfFuU]{0,2}(?:'''[\\s\\S]*?'''|\"\"\"[\\s\\S]*?\"\"\"|'(?:\\\\.|[^'\\\\\\n])*'|\"(?:\\\\.|[^\"\\\\\\n])*\"))",
       "(?<number>\\b\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b)",
-      "(?<defname>(?<=\\bdef\\s)[A-Za-z_]\\w*)",
-      "(?<classname>(?<=\\bclass\\s)[A-Za-z_]\\w*)",
+      "(?<defkw>\\bdef)(?<defgap>\\s+)(?<defname>[A-Za-z_]\\w*)",
+      "(?<classkw>\\bclass)(?<classgap>\\s+)(?<classname>[A-Za-z_]\\w*)",
       "(?<selfword>\\bself\\b)",
       "(?<boolnone>\\b(?:True|False|None)\\b)",
-      "(?<classkw>\\bclass\\b)",
       "(?<ellipsis>\\.\\.\\.)",
-      "(?<keyword>\\b(?:def|if|elif|else|for|while|return|yield|try|except|finally|raise|with|break|continue|pass|and|or|not|in|is|import|from|as|lambda|global|nonlocal|del|assert|async|await|yield)\\b)",
+      "(?<keyword>\\b(?:if|elif|else|for|while|return|yield|try|except|finally|raise|with|break|continue|pass|and|or|not|in|is|import|from|as|lambda|global|nonlocal|del|assert|async|await)\\b)",
       "(?<funcname>[A-Za-z_]\\w*(?=\\s*\\())",
       "(?<cmpop>==|!=|<=|>=|<|>)",
       "(?<bracket>[()\\[\\]{}])",
@@ -27,11 +29,8 @@
     comment: "tok-comment",
     string: "tok-string",
     number: "tok-number",
-    defname: "tok-funcname",
-    classname: "tok-classname",
     selfword: "tok-self",
     boolnone: "tok-boolnone",
-    classkw: "tok-classname",
     ellipsis: "tok-keyword",
     keyword: "tok-keyword",
     funcname: "tok-funcname",
@@ -48,6 +47,10 @@
       .replace(/>/g, "&gt;");
   }
 
+  function span(cls, text) {
+    return '<span class="' + cls + '">' + escapeHtml(text) + "</span>";
+  }
+
   function highlight(source) {
     var out = [];
     var cursor = 0;
@@ -57,11 +60,21 @@
       if (match.index > cursor) {
         out.push(escapeHtml(source.slice(cursor, match.index)));
       }
-      var groupName = Object.keys(match.groups).find(function (key) {
-        return match.groups[key] !== undefined;
-      });
-      var cls = CLASS_BY_GROUP[groupName] || "tok-name";
-      out.push('<span class="' + cls + '">' + escapeHtml(match[0]) + "</span>");
+      var g = match.groups;
+      if (g.defname !== undefined) {
+        out.push(span("tok-keyword", g.defkw));
+        out.push(escapeHtml(g.defgap));
+        out.push(span("tok-funcname", g.defname));
+      } else if (g.classname !== undefined) {
+        out.push(span("tok-classname", g.classkw));
+        out.push(escapeHtml(g.classgap));
+        out.push(span("tok-classname", g.classname));
+      } else {
+        var groupName = Object.keys(g).find(function (key) {
+          return g[key] !== undefined;
+        });
+        out.push(span(CLASS_BY_GROUP[groupName] || "tok-name", match[0]));
+      }
       cursor = TOKEN_RE.lastIndex;
     }
     out.push(escapeHtml(source.slice(cursor)));
