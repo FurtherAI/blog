@@ -169,13 +169,16 @@
 
     <div class="aside">
       <p>
-        That trade is measurable. Packing a synthetic batch of 53 groups (48 RL groups
-        plus 5 SFT-style groups, all sharing one 350-token system prompt) needs
-        <span class="result-inline">77</span> packed rows with one global tree, versus
-        <span class="result-inline">82</span> rows if the tree is built independently
-        per group and only <em>then</em> bin-packed &mdash; six percent more rows purely
-        from where the sharing boundary was drawn, before the bin-packing heuristic even
-        runs. Full numbers, including the no-sharing baseline, are at the end.
+        That trade is measurable. On a synthetic batch of 48 RL groups spread across
+        three task families &mdash; math, tool-use, code review &mdash; all sharing one
+        350-token system prompt and packed into 4096-token rows, building the tree
+        independently per group and only <em>then</em> bin-packing needs
+        <span class="result-inline">66</span> rows; pooling everything into one global
+        tree first needs <span class="result-inline">61</span> &mdash; about eight
+        percent fewer rows purely from where the sharing boundary was drawn, with the
+        bin-packing algorithm itself held fixed. The full historical comparison,
+        including what ART's packing looked like before any of this existed, is at the
+        end.
       </p>
     </div>
 
@@ -226,6 +229,7 @@
 
 
 def _place_prefix_tree_leaves(groups, *, seq_len):
+    # empty_bin_cost is just the full, unshared length
     ordered = sorted(groups, key=lambda g: max(leaf.empty_bin_cost for leaf in g),
                       reverse=True)
     bins = []
@@ -439,25 +443,33 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
     <p>
       Numbers below are from running ART's real packing code
       (<code>_place_prefix_tree_leaves</code>, <code>prefix_tree_pack_segments</code>)
-      against a synthetic-but-realistic batch: 48 GRPO-style groups of 4&ndash;16
-      completions plus 5 SFT-style groups, all sharing one 350-token system prompt,
-      packed into 4096-token rows.
+      against a synthetic-but-realistic batch: 48 RL groups spread across three task
+      families &mdash; math, tool-use, code review &mdash; all sharing one 350-token
+      system prompt, packed into 4096-token rows. Same batch as the scope comparison
+      above.
+    </p>
+
+    <p>
+      Worth knowing what came before, too. The original version (we called it
+      &ldquo;shared prefix,&rdquo; not &ldquo;prefix tree,&rdquo; since sharing was
+      exactly one level deep and scoped to a single RL group) deduplicated one whole
+      group prompt at a time under simple in-order row filling. The version that
+      replaced it kept that same in-order, one-row-at-a-time filling, but rebuilt a
+      real multi-segment tree fresh for whatever already happened to be in the
+      current row &mdash; a real, shipped design, measured below as
+      &ldquo;restart-per-row.&rdquo;
     </p>
 
     <figure class="card bench-figure">
-      <h5>Rows needed to pack 515 completions into 4096-token rows</h5>
+      <h5>Rows needed to pack 450 completions into 4096-token rows</h5>
       <div class="bench-bars">
         <div class="bench-bar-row">
-          <div class="bench-bar-label">no sharing (naive)</div>
-          <div class="bench-bar-track"><div class="bench-bar-fill" style="width:100%">147 rows</div></div>
+          <div class="bench-bar-label">restart-per-row</div>
+          <div class="bench-bar-track"><div class="bench-bar-fill" style="width:100%">100 rows</div></div>
         </div>
         <div class="bench-bar-row">
-          <div class="bench-bar-label">tree per group</div>
-          <div class="bench-bar-track"><div class="bench-bar-fill" style="width:55.8%">82 rows</div></div>
-        </div>
-        <div class="bench-bar-row">
-          <div class="bench-bar-label">one global tree (ART)</div>
-          <div class="bench-bar-track"><div class="bench-bar-fill" style="width:52.4%">77 rows</div></div>
+          <div class="bench-bar-label">global tree (ART)</div>
+          <div class="bench-bar-track"><div class="bench-bar-fill" style="width:61%">61 rows</div></div>
         </div>
       </div>
 
@@ -466,16 +478,18 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
           <tr><th>scenario</th><th>rows</th><th>physical tokens</th><th>vs. logical</th></tr>
         </thead>
         <tbody>
-          <tr><td>logical (unpacked)</td><td>&mdash;</td><td>566,670</td><td>&mdash;</td></tr>
-          <tr><td>no sharing (naive best-fit)</td><td>147</td><td>566,670</td><td>0.0%</td></tr>
-          <tr><td>tree per group, then bin-pack</td><td>82</td><td>321,347</td><td>&minus;43.3%</td></tr>
-          <tr><td>one global tree, then bin-pack</td><td>77</td><td>307,604</td><td>&minus;45.7%</td></tr>
+          <tr><td>logical (unpacked)</td><td>&mdash;</td><td>494,399</td><td>&mdash;</td></tr>
+          <tr><td>restart-per-row (real tree, in-order)</td><td>100</td><td>361,992</td><td>&minus;26.8%</td></tr>
+          <tr><td>global tree + bin-pack (current)</td><td>61</td><td>240,946</td><td>&minus;51.3%</td></tr>
         </tbody>
       </table>
       <p class="note">
-        Sharing at all cuts rows 44% (147 &rarr; 82). Refusing to draw a per-group
-        boundary &mdash; one global tree instead &mdash; buys another 6% fewer rows and
-        4.3% fewer physical tokens on top of that, for free, on this batch.
+        Moving from in-order placement to a global tree plus deliberate bin-packing
+        cuts rows 39% (100 &rarr; 61) and physical tokens 33% (361,992 &rarr; 240,946)
+        on this batch. That's a bigger jump than the scope-only comparison earlier
+        (66 &rarr; 61 rows) because this is the full historical delta &mdash; both the
+        tree's scope <em>and</em> the placement strategy changed together, not one
+        variable held fixed.
       </p>
     </figure>
 
@@ -486,10 +500,10 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
         <tr><th>groups</th><th>completions</th><th>tree walk</th><th>bin packing</th><th>rows</th></tr>
       </thead>
       <tbody>
-        <tr><td>16</td><td>169</td><td>4.4 ms</td><td>1.0 ms</td><td>26</td></tr>
-        <tr><td>64</td><td>694</td><td>10.8 ms</td><td>12.3 ms</td><td>104</td></tr>
-        <tr><td>256</td><td>2,713</td><td>79.0 ms</td><td>171.8 ms</td><td>410</td></tr>
-        <tr><td>1,024</td><td>10,769</td><td>827.6 ms</td><td>2,676.0 ms</td><td>1,642</td></tr>
+        <tr><td>12</td><td>105</td><td>0.9 ms</td><td>1.4 ms</td><td>15</td></tr>
+        <tr><td>48</td><td>450</td><td>9.6 ms</td><td>4.2 ms</td><td>61</td></tr>
+        <tr><td>192</td><td>1,668</td><td>42.0 ms</td><td>48.7 ms</td><td>227</td></tr>
+        <tr><td>768</td><td>6,686</td><td>291.2 ms</td><td>743.5 ms</td><td>918</td></tr>
       </tbody>
     </table>
     <p class="note">
