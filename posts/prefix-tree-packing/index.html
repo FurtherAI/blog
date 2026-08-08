@@ -431,12 +431,14 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
     <h2>Does it actually help?</h2>
 
     <p>
-      Numbers below are from running ART's real packing code
-      (<code>_place_prefix_tree_leaves</code>, <code>prefix_tree_pack_segments</code>)
-      against a synthetic-but-realistic batch: 48 RL groups spread across three task
-      families &mdash; math, tool-use, code review &mdash; all sharing one 350-token
-      system prompt, packed into 4096-token rows. Same batch as the scope comparison
-      above.
+      Numbers below replay the original prefix-tree placement rule from the first
+      version of the PR against ART's current global-occupancy placement
+      (<code>_place_prefix_tree_leaves</code>, <code>prefix_tree_pack_segments</code>).
+      The input is 32 agent rollouts in four groups of eight, packed into
+      131,072-token training rows. Every rollout starts with the same 4,096-token
+      system and tool prefix, then a 12,000-token scenario prefix unique to its
+      group. The groups arrive with completion lengths of 2,000, 2,000, 12,000,
+      and 7,000 tokens respectively: short A, short B, long, then medium.
     </p>
 
     <p>
@@ -446,43 +448,69 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
       The initial version was in-order, one-row-at-a-time filling until the row was full, and it rebuilt a
       real multi-segment tree fresh for whatever already happened to be in the
       current row &mdash; measured below as
-      &ldquo;restart-per-row.&rdquo; We note this 
+      &ldquo;original in-order tree.&rdquo; I note this version simply to give some vision on alternatives you might build.
     </p>
 
     <figure class="card bench-figure">
-      <h5>Rows needed to pack 450 completions into 4096-token rows</h5>
+      <h5>Rows needed to pack 32 variable-length agent rollouts into 131,072-token rows</h5>
+
+      <table class="data-table">
+        <thead>
+          <tr><th>arrival order</th><th>group-specific prefix</th><th>completion length</th><th>rollouts</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1. short A</td><td>12,000</td><td>2,000</td><td>8</td></tr>
+          <tr><td>2. short B</td><td>12,000</td><td>2,000</td><td>8</td></tr>
+          <tr><td>3. long</td><td>12,000</td><td>12,000</td><td>8</td></tr>
+          <tr><td>4. medium</td><td>12,000</td><td>7,000</td><td>8</td></tr>
+        </tbody>
+      </table>
+      <p class="note">
+        Each row also pays for the 4,096-token system/tool root once. Prefix and
+        completion lengths exclude that common root.
+      </p>
+
       <div class="bench-bars">
         <div class="bench-bar-row">
-          <div class="bench-bar-label">restart-per-row</div>
-          <div class="bench-bar-track"><div class="bench-bar-fill" style="width:100%">100 rows</div></div>
+          <div class="bench-bar-label">original in-order tree</div>
+          <div class="bench-bar-track"><div class="bench-bar-fill" style="width:100%">3 rows</div></div>
         </div>
         <div class="bench-bar-row">
           <div class="bench-bar-label">global tree (ART)</div>
-          <div class="bench-bar-track"><div class="bench-bar-fill" style="width:61%">61 rows</div></div>
+          <div class="bench-bar-track"><div class="bench-bar-fill" style="width:66.7%">2 rows</div></div>
         </div>
       </div>
 
       <table class="data-table">
         <thead>
-          <tr><th>scenario</th><th>rows</th><th>physical tokens</th><th>vs. logical</th></tr>
+          <tr><th>placement</th><th>row contents</th><th>used tokens</th></tr>
         </thead>
         <tbody>
-          <tr><td>logical (unpacked)</td><td>&mdash;</td><td>494,399</td><td>&mdash;</td></tr>
-          <tr><td>restart-per-row (real tree, in-order)</td><td>100</td><td>361,992</td><td>&minus;26.8%</td></tr>
-          <tr><td>global tree + bin-pack (current)</td><td>61</td><td>240,946</td><td>&minus;51.3%</td></tr>
+          <tr><td>in-order row 1</td><td>short A + short B + half of long</td><td>120,113 / 131,072</td></tr>
+          <tr><td>in-order row 2</td><td>remaining long + 7 medium</td><td>125,105 / 131,072</td></tr>
+          <tr><td>in-order row 3</td><td>final medium rollout</td><td>23,096 / 131,072</td></tr>
+          <tr><td>global row 1</td><td>long + 1 medium</td><td>130,105 / 131,072</td></tr>
+          <tr><td>global row 2</td><td>remaining medium + short A + short B</td><td>122,114 / 131,072</td></tr>
         </tbody>
       </table>
       <p class="note">
-        Moving from in-order placement to a global tree plus deliberate bin-packing
-        cuts rows 39% (100 &rarr; 61) and physical tokens 33% (361,992 &rarr; 240,946)
-        on this batch. That's a bigger jump than the scope-only comparison earlier
-        (66 &rarr; 61 rows) because this is the full historical delta &mdash; both the
-        tree's scope <em>and</em> the placement strategy changed together, not one
-        variable held fixed.
+        The original packer permanently moved on whenever the next rollout did not
+        fit, so the last medium rollout stranded almost an entire row. Global
+        placement sees every leaf first, puts the long group down before the short
+        groups, and fills the remaining space deliberately. The same 32 rollouts use
+        two rows instead of three: allocated training tokens fall 33% (393,216
+        &rarr; 262,144). The tree and training
+        semantics are unchanged; only row placement differs. The example is not super unrealistic,
+        though I think often the in-order version does perfectly fine (equivalent-ish to the current version).
       </p>
     </figure>
 
-    <p>Planning cost, same code, on the same synthetic batch shape at increasing scale:</p>
+    <p>
+      Packing quality is one question; planning cost is a separate one. Using the
+      same multi-task-curriculum batch shape as the scope comparison earlier in the
+      post (not the 32-rollout example above), here's how the tree walk and the
+      bin-packing search each scale as the number of leaves grows:
+    </p>
 
     <table class="data-table">
       <thead>
