@@ -185,7 +185,7 @@
     <p>
       The same global-tree-then-bin-pack computation gets reused for planning, too.
       ART's pipeline autotuner estimates how many packed rows a candidate set of groups
-      would need by running this exact tree-and-bin-pack pass over sampled subsets (this is a pretty fast function),
+      would need by running this exact tree-and-bin-pack pass over sampled subsets of past data,
       before ever committing to a training step's batch composition &mdash; the same
       machinery that packs a step also gets asked &ldquo;what if&rdquo; questions about
       how to build the next one.
@@ -237,6 +237,9 @@ def _place_prefix_tree_leaves(groups, *, seq_len):
         best_bin, best_remaining = None, seq_len + 1
         for candidate in bins:
             count = candidate.token_count + candidate.insertion_delta(leaf)
+            # this fill most heuristic (inherited from best-fit-decreasing) is a little odd, say you have two equally full bins, it
+            # will pick the one that shares fewer tokens. But, practically I could not
+            # show one generally performed better on semi-realistic workloads than the other, so we stick with this
             if count &lt;= seq_len and seq_len - count &lt; best_remaining:
                 best_bin, best_remaining = candidate, seq_len - count
         if best_bin is None:
@@ -300,17 +303,19 @@ def _place_prefix_tree_leaves(groups, *, seq_len):
     <h2>Token-mixing layers</h2>
 
     <p>
-      Packing only pays off if whatever mixes tokens actually respects the tree
-      &mdash; a token may attend only to its own ancestor chain, never a sibling
-      branch or an unrelated tree packed into the same row.
+      Packing is useful if token mixing layers are causal, i.e. a token may attend only to its own ancestor chain, never a sibling
+      branch or an unrelated tree packed into the same row. This is prefix caching and radix attention in vLLM and SGLang respectively, just for training.
     </p>
 
     <p>
-      For ordinary masked attention this is nearly free. A token's visible set
-      decomposes into one fully-visible block per ancestor segment, plus a causal
-      triangle over its own segment &mdash; exactly the two primitive shapes
-      flash/flex-attention kernels already special-case, so most blocks in a packed
-      row are skipped entirely as empty and the rest need no bespoke masking logic.
+      The pattern that holds for every layer below except GDN: the attention kernel
+      itself never changes, only the input we build for it does. For ordinary masked
+      attention, flex/flash kernels already accept an arbitrary mask specification
+      &mdash; a token's tree-correct visible set just decomposes into one fully-visible
+      block per ancestor segment plus a causal triangle over its own segment, exactly
+      the two primitive shapes those kernels already special-case. Building that mask
+      correctly is the whole job; most blocks in a packed row end up empty and get
+      skipped entirely, and the kernel is none the wiser.
     </p>
 
     <figure class="card attn-figure">
@@ -351,12 +356,16 @@ def _place_prefix_tree_leaves(groups, *, seq_len):
     </figure>
 
     <p>
-      ART's sparse top-k indexer attention variants (GLM-5.2- and DeepSeek-V4-style)
-      don't compute a mask at all &mdash; they pick a fixed top-k of keys per query.
-      But the same ancestor-chain test still applies; it just gets baked into the
-      candidate-index construction instead of a block mask, using the same
-      pre-order/exit-order interval check on the tree, so no new attention math is
-      needed there either.
+      Same pattern, different input shape. ART's sparse top-k indexer attention
+      variants (GLM-5.2- and DeepSeek-V4-style) don't take a mask &mdash; their
+      attention kernels (<code>sparse_mla</code>, <code>sparse_attn_tilelang</code>)
+      already just gather and attend over whatever key/value indices they're handed,
+      because that's what top-k sparse attention over long context looks like whether
+      or not anything is packed. So the kernel doesn't change here either. All the
+      tree-awareness lives one level up, in the indexer: it only ever scores or
+      constructs candidates from a query's actual ancestor chain, using the same
+      pre-order/exit-order interval check as the mask above, so a sibling branch's
+      keys are never even proposed, let alone selected.
     </p>
 
     <p>
