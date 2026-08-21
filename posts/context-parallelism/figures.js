@@ -100,17 +100,17 @@
     dense: {
       title: "Dense attention weak scaling",
       unit: "ms, forward + backward",
-      labels: ["CP2", "CP4", "CP8"],
+      labels: ["CP1", "CP2", "CP4", "CP8"],
       series: [
-        { name: "fixed 5K", values: [19.54, 19.98, 20.47], color: "--cp-blue" },
-        { name: "varied 5K", values: [19.72, 20.47, 20.85], color: "--cp-cyan" }
+        { name: "fixed 5K", values: [17.38, 19.54, 19.98, 20.47], color: "--cp-blue" },
+        { name: "varied 5K", values: [17.45, 19.72, 20.47, 20.85], color: "--cp-cyan" }
       ],
-      min: 18,
+      min: 16,
       max: 22,
-      note: "Global tokens: 81,920 / 163,840 / 327,680",
+      note: "Global tokens: 40,960 / 81,920 / 163,840 / 327,680",
       stats: [
-        ["4x", "physical tokens, CP2 to CP8"],
-        ["1.053x", "fixed layer-time ratio"],
+        ["8x", "physical tokens, CP1 to CP8"],
+        ["1.178x", "fixed layer-time ratio"],
         ["0.70 ms", "CP8 exposed communication"]
       ]
     },

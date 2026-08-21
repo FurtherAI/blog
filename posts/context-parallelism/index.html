@@ -263,9 +263,9 @@ output, lse = exact_stage_merge(partials)</code></pre>
           <div class="timeline" id="attention-timeline">
             <div class="time-axis"><span>forward</span><span>backward</span></div>
             <div class="lane"><label>rank 0</label><i class="comm c1"></i><i class="compute f1"></i><i class="layout m1"></i><i class="compute b1"></i><i class="comm c2"></i></div>
-            <div class="lane"><label>rank 1</label><i class="comm c1 delay-1"></i><i class="compute f1"></i><i class="layout m1"></i><i class="compute b1 wide"></i><i class="comm c2"></i></div>
+            <div class="lane"><label>rank 1</label><i class="comm c1 delay-1"></i><i class="compute f1"></i><i class="layout m1"></i><i class="compute b1 wide-bar"></i><i class="comm c2"></i></div>
             <div class="lane"><label>rank 2</label><i class="comm c1 delay-2"></i><i class="compute f1"></i><i class="layout m1"></i><i class="compute b1"></i><i class="comm c2"></i><i class="exposed e1"></i></div>
-            <div class="lane"><label>rank 3</label><i class="comm c1"></i><i class="compute f1 wide"></i><i class="layout m1"></i><i class="compute b1"></i><i class="comm c2"></i></div>
+            <div class="lane"><label>rank 3</label><i class="comm c1"></i><i class="compute f1 wide-bar"></i><i class="layout m1"></i><i class="compute b1"></i><i class="comm c2"></i></div>
           </div>
           <figcaption id="timeline-caption">
             Conceptual schedule. Total NCCL duration is not the exposed cost: the
@@ -684,8 +684,8 @@ attention token layout</code></pre>
           </div>
           <div class="result-summary" id="result-summary" aria-live="polite"></div>
           <figcaption id="results-caption">
-            Select a panel to compare algorithmic and full-model evidence. Hover or
-            focus bars for exact values; complete tables follow below.
+            Operation-level and full-model evidence use separate scales; complete
+            values and benchmark scope follow below.
           </figcaption>
         </figure>
 
@@ -697,7 +697,7 @@ attention token layout</code></pre>
           327,680. Varied completion lengths measured 19.72/20.47/20.85 ms. Fresh
           latest-source CP2/CP4 reproduction measured 19.405/19.853 ms fixed and
           19.530/20.498 ms varied. That is the behavior weak scaling is supposed to
-          produce: more than 2x the work from CP2 to CP8 for about 5% to 6% more layer
+          produce: 4x the work from CP2 to CP8 for about 5% to 6% more layer
           time.
         </p>
 
@@ -705,15 +705,46 @@ attention token layout</code></pre>
           <table>
             <thead><tr><th>Dense workload</th><th>CP1</th><th>CP2</th><th>CP4</th><th>CP8</th></tr></thead>
             <tbody>
-              <tr><td>fixed 5K + 16x100</td><td class="pending" data-cp1-fixed>pending</td><td>19.54</td><td>19.98</td><td>20.47</td></tr>
-              <tr><td>varied 5K + 16x~100</td><td class="pending" data-cp1-varied>pending</td><td>19.72</td><td>20.47</td><td>20.85</td></tr>
+              <tr><td>fixed 5K + 16x100</td><td>17.38</td><td>19.54</td><td>19.98</td><td>20.47</td></tr>
+              <tr><td>varied 5K + 16x~100</td><td>17.45</td><td>19.72</td><td>20.47</td><td>20.85</td></tr>
               <tr><td>varied medium-long</td><td>-</td><td>31.80</td><td>33.79</td><td>34.68</td></tr>
               <tr><td>varied dominant family</td><td>43.07</td><td>53.31</td><td>54.96</td><td>56.83</td></tr>
               <tr><td>true completion chain</td><td>366.13</td><td>382.35</td><td>394.82</td><td>403.83</td></tr>
             </tbody>
           </table>
         </div>
-        <p class="table-note">Hot BF16 H200 forward + backward milliseconds per layer. Non-fixed completion lengths are sampled independently per sequence.</p>
+        <p class="table-note">Hot BF16 H200 forward + backward milliseconds per layer. CP1 is a latest-source check; CP2/4/8 are the accepted matrix, independently reproduced at CP2/4. Non-fixed completion lengths are sampled independently per sequence.</p>
+
+        <h3>Preparation and execution run on different clocks</h3>
+
+        <p>
+          A changing tree must be planned and converted into sparse block metadata,
+          but those results are reused by every matching attention layer. The table
+          below reports the median, across sixteen independently built inputs, of the
+          slowest rank. It is deliberately not added to every layer time.
+        </p>
+
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Latest-source workload</th><th>CP</th><th>CPU plan</th><th>GPU block metadata</th><th>one layer fwd + bwd</th></tr></thead>
+            <tbody>
+              <tr><td>fixed 5K + 16x100</td><td>1</td><td>2.39 ms</td><td>43.70 ms</td><td>17.38 ms</td></tr>
+              <tr><td>fixed 5K + 16x100</td><td>2</td><td>0.87 ms</td><td>44.36 ms</td><td>19.40 ms</td></tr>
+              <tr><td>fixed 5K + 16x100</td><td>4</td><td>1.70 ms</td><td>34.52 ms</td><td>19.85 ms</td></tr>
+              <tr><td>varied 5K + 16x~100</td><td>1</td><td>17.10 ms</td><td>45.13 ms</td><td>17.45 ms</td></tr>
+              <tr><td>varied 5K + 16x~100</td><td>2</td><td>25.65 ms</td><td>43.28 ms</td><td>19.54 ms</td></tr>
+              <tr><td>varied 5K + 16x~100</td><td>4</td><td>42.44 ms</td><td>33.82 ms</td><td>20.50 ms</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          Fixed plans hit the plan cache; varied trees pay search and rank
+          materialization. Block-mask construction is the largest setup bucket at
+          this scale. Production prepares the next microbatch asynchronously, so the
+          exposed cost depends on lookahead and model compute, while the operation lab
+          records the whole preparation cost instead of assuming it is hidden.
+        </p>
 
         <aside class="finding-note warning-note">
           <p class="note-label">A benchmark issue worth fixing</p>
@@ -735,8 +766,10 @@ attention token layout</code></pre>
             first such role, so <code>_stage_merge_backward_row_kernel</code> compiled
             inside backward and the peer waited at dKV reduction. This was a one-time
             role compile, not 600 ms of NCCL and not token-count specialization. The
-            publication rerun uses a longer disjoint warmup horizon and reports the
-            outlier rather than dropping it.
+            rerun used sixteen disjoint warmup trees. Sequence 105 then measured
+            20.260 ms and the sixteen-sequence median was 19.536 ms, with no measured
+            compile cliff. Token counts remain runtime arguments; the remaining cold
+            key is a finite rank-role signature that deployment warmup must cover.
           </p>
         </aside>
 
@@ -869,8 +902,9 @@ attention token layout</code></pre>
               <code>e932bff638d9efe46db73ace334656181c302544</code>, harness
               <code>a7ea10ff</code>, BF16, Qwen3.5-35B shapes (32 query heads, four KV
               heads, head dimension 128), H200, and max-rank CUDA wall. Warmup trees
-              are disjoint from sixteen measured trees; exact-tree warmup is disabled
-              in the changing-input runs. Fixed inputs repeat completion lengths;
+              are disjoint from sixteen measured trees; the final CP2 changing-input
+              run used sixteen disjoint warmup trees and exact-tree warmup is disabled.
+              Fixed inputs repeat completion lengths;
               every other workload samples completion lengths independently per tree.
             </p>
             <p>

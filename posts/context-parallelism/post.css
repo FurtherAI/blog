@@ -126,6 +126,7 @@ button[data-theme-toggle]:focus-visible {
 }
 
 figure.wide {
+  margin-left: 50%;
   margin-right: 0;
 }
 
@@ -665,7 +666,7 @@ figure > figcaption {
 .lane .e1 { left: 96%; width: 2%; }
 .lane .delay-1 { left: 4%; }
 .lane .delay-2 { left: 7%; }
-.lane .wide { width: 46%; }
+.lane .wide-bar { width: 46%; }
 
 .engineering-note,
 .finding-note,
