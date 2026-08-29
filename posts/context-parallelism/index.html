@@ -7,7 +7,7 @@
   <meta name="description" content="How ART distributes prefix-tree training across dense attention, sparse MLA, GDN, and Mamba-2 while retaining weak-scaling efficiency." />
   <script src="../../assets/js/theme.js"></script>
   <link rel="stylesheet" href="../../assets/css/base.css" />
-  <link rel="stylesheet" href="post.css" />
+  <link rel="stylesheet" href="post.css?v=20260829b" />
 </head>
 <body>
   <div class="reading-progress" aria-hidden="true"><span></span></div>
@@ -329,15 +329,15 @@ output, lse = exact_stage_merge(partials)</code></pre>
           <div class="stream-timeline" id="attention-timeline">
             <div class="stream-panel">
               <div class="stream-title"><strong>forward</strong><span>one representative rank</span></div>
-              <div class="stream-lane"><label>NCCL stream</label><i class="comm" style="--start: 1; --span: 28">fetch KV wave 0</i><i class="comm" style="--start: 30; --span: 22">fetch KV wave 1</i></div>
-              <div class="stream-lane"><label>gather stream</label><i class="layout" style="--start: 2; --span: 12">gather Q0</i><i class="layout" style="--start: 17; --span: 11">gather Q1</i></div>
-              <div class="stream-lane"><label>compute stream</label><i class="compute" style="--start: 2; --span: 31">local attn</i><i class="exposed" style="--start: 33; --span: 2"></i><i class="compute" style="--start: 35; --span: 25">remote 0</i><i class="layout" style="--start: 60; --span: 7">merge</i><i class="compute" style="--start: 67; --span: 25">remote 1</i><i class="layout" style="--start: 92; --span: 7">merge</i></div>
+              <div class="stream-lane"><label>NCCL stream</label><i class="comm" style="--start: 1; --span: 28">KV fetch 0</i><i class="comm" style="--start: 30; --span: 22">KV fetch 1</i></div>
+              <div class="stream-lane"><label>gather stream</label><i class="layout" style="--start: 2; --span: 12">Q0</i><i class="layout" style="--start: 17; --span: 11">Q1</i></div>
+              <div class="stream-lane"><label>compute stream</label><i class="compute" style="--start: 2; --span: 31">local</i><i class="exposed" style="--start: 33; --span: 2"></i><i class="compute" style="--start: 35; --span: 25">remote 0</i><i class="layout" style="--start: 60; --span: 7" aria-label="merge stage outputs"></i><i class="compute" style="--start: 67; --span: 25">remote 1</i><i class="layout" style="--start: 92; --span: 7" aria-label="merge stage outputs"></i></div>
             </div>
             <div class="stream-panel">
               <div class="stream-title"><strong>backward</strong><span>reverse stage order</span></div>
-              <div class="stream-lane"><label>compute stream</label><i class="layout" style="--start: 1; --span: 12">merge bwd</i><i class="compute" style="--start: 13; --span: 27">remote 1 bwd</i><i class="compute" style="--start: 40; --span: 25">remote 0 bwd</i><i class="compute" style="--start: 65; --span: 33">local bwd</i></div>
-              <div class="stream-lane"><label>NCCL stream</label><i class="comm" style="--start: 36; --span: 25">reduce dKV1</i><i class="comm" style="--start: 62; --span: 24">reduce dKV0</i></div>
-              <div class="stream-lane"><label>owner reduce</label><i class="layout" style="--start: 58; --span: 9">scatter-add</i><i class="layout" style="--start: 84; --span: 10">scatter-add</i></div>
+              <div class="stream-lane"><label>compute stream</label><i class="layout" style="--start: 1; --span: 12" aria-label="merge backward"></i><i class="compute" style="--start: 13; --span: 27">remote 1</i><i class="compute" style="--start: 40; --span: 25">remote 0</i><i class="compute" style="--start: 65; --span: 33">local</i></div>
+              <div class="stream-lane"><label>NCCL stream</label><i class="comm" style="--start: 36; --span: 25">dKV 1</i><i class="comm" style="--start: 62; --span: 24">dKV 0</i></div>
+              <div class="stream-lane"><label>owner reduce</label><i class="layout" style="--start: 58; --span: 9">add</i><i class="layout" style="--start: 84; --span: 10">add</i></div>
             </div>
           </div>
           <figcaption id="timeline-caption">
@@ -511,9 +511,9 @@ O = exp(L_a - L) * O_a + exp(L_b - L) * O_b</code></pre>
             <div><b>5</b><span>existing sparse kernel</span><code>sparse_mla(q, KV, offsets)</code></div>
           </div>
           <div class="route-example">
-            <span>stage A: <code>(.91, id 17)</code> <code>(.86, id 4)</code></span>
-            <span>stage B: <code>(.91, id 9)</code> <code>(.72, id 23)</code></span>
-            <strong>global top-3: <code>17, 9, 4</code></strong>
+            <div><b>stage A</b><code>.91 / id 17</code><code>.86 / id 4</code></div>
+            <div><b>stage B</b><code>.91 / id 9</code><code>.72 / id 23</code></div>
+            <div class="route-result"><b>global top-3</b><code>17, 9, 4</code></div>
           </div>
           <figcaption id="glm-caption">
             The sparse kernel already consumes an explicit list of selected KV rows.
@@ -1312,6 +1312,6 @@ for waves in bounded_wave_counts:
     </footer>
   </main>
 
-  <script src="figures.js"></script>
+  <script src="figures.js?v=20260829b"></script>
 </body>
 </html>
