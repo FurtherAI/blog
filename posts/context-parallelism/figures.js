@@ -11,47 +11,61 @@
     var row = document.getElementById("capacity-row");
     if (!row) return;
     row.replaceChildren();
-    row.style.gridTemplateColumns = "repeat(" + cp + ", minmax(0, 1fr))";
+    var rootTokens = 24;
+    var completionTokens = 8;
+    var totalTokens = 64 * cp;
+    var treeRollouts = Math.floor((totalTokens - rootTokens) / completionTokens);
+    var flatRollouts = Math.floor(totalTokens / (rootTokens + completionTokens));
 
-    var unit = 100;
-    var total = cp * unit;
-    var pieces = [{ start: 0, end: 62, kind: "root" }];
-    var cursor = 62;
-    var kinds = ["branch-a", "completion", "branch-b", "completion-alt"];
-    var widths = [38, 46, 34, 42, 27, 49, 36, 41];
-    var index = 0;
-    while (cursor < total) {
-      var width = widths[index % widths.length];
-      pieces.push({
-        start: cursor,
-        end: Math.min(total, cursor + width),
-        kind: kinds[index % kinds.length]
-      });
-      cursor += width;
-      index += 1;
+    function piece(track, kind, tokens) {
+      var element = document.createElement("span");
+      element.className = "capacity-piece " + kind;
+      element.style.flex = "0 0 " + (100 * tokens / totalTokens) + "%";
+      track.appendChild(element);
     }
 
-    for (var rank = 0; rank < cp; rank += 1) {
-      var rankStart = rank * unit;
-      var rankEnd = rankStart + unit;
-      var rankEl = document.createElement("div");
-      rankEl.className = "capacity-rank";
-      rankEl.dataset.rank = "rank " + rank;
-      pieces.forEach(function (piece) {
-        var start = Math.max(piece.start, rankStart);
-        var end = Math.min(piece.end, rankEnd);
-        if (end <= start) return;
-        var segment = document.createElement("span");
-        segment.className = "capacity-segment " + piece.kind;
-        segment.style.left = (start - rankStart) + "%";
-        segment.style.width = (end - start) + "%";
-        rankEl.appendChild(segment);
-      });
-      row.appendChild(rankEl);
+    function line(label, rollouts, tree) {
+      var element = document.createElement("div");
+      element.className = "capacity-line";
+      var title = document.createElement("b");
+      title.textContent = label;
+      var track = document.createElement("div");
+      track.className = "capacity-track";
+      if (tree) {
+        piece(track, "tree-root", rootTokens);
+        for (var index = 0; index < rollouts; index += 1) {
+          piece(track, "tree-completion", completionTokens);
+        }
+        piece(track, "unused", totalTokens - rootTokens - rollouts * completionTokens);
+      } else {
+        for (var rollout = 0; rollout < rollouts; rollout += 1) {
+          piece(track, "flat-root", rootTokens);
+          piece(track, "flat-completion", completionTokens);
+        }
+        piece(track, "unused", totalTokens - rollouts * (rootTokens + completionTokens));
+      }
+      var output = document.createElement("output");
+      output.textContent = rollouts + " traj";
+      element.append(title, track, output);
+      row.appendChild(element);
     }
 
-    document.getElementById("scale-tokens").textContent = cp + "S";
-    document.getElementById("scale-rollouts").textContent = "~" + cp + "x";
+    line("prefix tree", treeRollouts, true);
+    line("flattened", flatRollouts, false);
+    var legend = document.createElement("div");
+    legend.className = "capacity-legend";
+    legend.innerHTML = [
+      '<span class="tree-root-key">shared root once</span>',
+      '<span class="tree-leaf-key">tree completion</span>',
+      '<span class="flat-root-key">repeated root</span>',
+      '<span class="flat-leaf-key">flat completion</span>'
+    ].join("");
+    row.appendChild(legend);
+
+    document.getElementById("scale-tokens").textContent = totalTokens + "K";
+    document.getElementById("scale-tree-rollouts").textContent = String(treeRollouts);
+    document.getElementById("scale-flat-rollouts").textContent = String(flatRollouts);
+    document.getElementById("scale-rollouts").textContent = (treeRollouts / flatRollouts).toFixed(2) + "x";
   }
 
   function initScaleFigure() {
@@ -71,42 +85,18 @@
     renderCapacity(4);
   }
 
-  function maskClass(query, key) {
-    if (query < 4) return key <= query ? "allowed-root" : "";
-    if (query < 8) {
-      if (key < 4) return "allowed-root";
-      return key >= 4 && key <= query ? "allowed-a" : "";
-    }
-    if (key < 4) return "allowed-root";
-    return key >= 8 && key <= query ? "allowed-b" : "";
-  }
-
-  function renderMask() {
-    var grid = document.getElementById("mask-grid");
-    if (!grid) return;
-    var fragment = document.createDocumentFragment();
-    for (var query = 0; query < 12; query += 1) {
-      for (var key = 0; key < 12; key += 1) {
-        var cell = document.createElement("span");
-        cell.className = "mask-cell " + maskClass(query, key);
-        cell.setAttribute("aria-hidden", "true");
-        fragment.appendChild(cell);
-      }
-    }
-    grid.appendChild(fragment);
-  }
-
   var resultData = {
     dense: {
       title: "Dense attention weak scaling",
-      unit: "ms, forward + backward",
+      unit: "runtime / CP1, lower is better",
       labels: ["CP1", "CP2", "CP4", "CP8"],
       series: [
-        { name: "fixed 5K", values: [17.38, 19.54, 19.98, 20.47], color: "--cp-blue" },
-        { name: "varied 5K", values: [17.45, 19.72, 20.47, 20.85], color: "--cp-cyan" }
+        { name: "fixed 5K", values: [1, 1.124, 1.150, 1.178], color: "--cp-blue" },
+        { name: "varied 5K", values: [1, 1.130, 1.173, 1.195], color: "--cp-cyan" },
+        { name: "ideal", values: [1, 1, 1, 1], color: "--text-muted", dashed: true, noPoints: true }
       ],
-      min: 16,
-      max: 22,
+      min: 0.96,
+      max: 1.24,
       note: "Global tokens: 40,960 / 81,920 / 163,840 / 327,680",
       stats: [
         ["8x", "physical tokens, CP1 to CP8"],
@@ -116,13 +106,14 @@
     },
     glm: {
       title: "GLM indexer + sparse MLA",
-      unit: "ms, forward + backward",
+      unit: "runtime / CP1, lower is better",
       labels: ["CP1", "CP2", "CP4", "CP8"],
       series: [
-        { name: "operation", values: [519.3, 645.5, 633.9, 669.4], color: "--cp-coral" }
+        { name: "operation", values: [1, 1.243, 1.221, 1.289], color: "--cp-indigo" },
+        { name: "ideal", values: [1, 1, 1, 1], color: "--text-muted", dashed: true, noPoints: true }
       ],
-      min: 480,
-      max: 700,
+      min: 0.96,
+      max: 1.34,
       note: "Global tokens: 81,920 / 163,840 / 327,680 / 655,360",
       stats: [
         ["8x", "physical tokens, CP1 to CP8"],
@@ -132,15 +123,16 @@
     },
     gdn: {
       title: "Qwen3.5 GDN execution",
-      unit: "ms, forward + backward",
+      unit: "runtime / CP1, lower is better",
       labels: ["CP1", "CP2", "CP4", "CP8"],
       series: [
-        { name: "varied 5K", values: [30.0, 35.8, 39.7, 44.1], color: "--cp-green" },
-        { name: "medium-long", values: [27.1, 37.9, 41.7, 43.1], color: "--cp-cyan" },
-        { name: "completion chain", values: [66.5, 78.8, 101.5, 114.2], color: "--cp-amber" }
+        { name: "varied 5K", values: [1, 1.193, 1.323, 1.470], color: "--cp-green" },
+        { name: "medium", values: [1, 1.399, 1.539, 1.590], color: "--cp-cyan" },
+        { name: "chain", values: [1, 1.185, 1.526, 1.717], color: "--cp-magenta" },
+        { name: "ideal", values: [1, 1, 1, 1], color: "--text-muted", dashed: true, noPoints: true }
       ],
-      min: 20,
-      max: 120,
+      min: 0.94,
+      max: 1.78,
       note: "Local/mixed plans and a deliberately chain-heavy control",
       stats: [
         ["1.47x", "varied 5K, CP8 / CP1"],
@@ -148,12 +140,29 @@
         ["1.72x", "all-chain, CP8 / CP1"]
       ]
     },
+    mamba: {
+      title: "Nemotron reduced 39-layer throughput",
+      unit: "thousand physical tokens / second",
+      labels: ["isolated", "matched\ncore", "end to\nend"],
+      series: [
+        { name: "throughput", values: [43.624, 43.469, 41.273], color: "--cp-violet", bars: true }
+      ],
+      min: 0,
+      max: 48,
+      note: "Same qualified 39-layer workflow shape",
+      stats: [
+        ["99.64%", "matched-core / isolated"],
+        ["94.61%", "end-to-end / isolated"],
+        ["3.455 s", "exact 52-layer 128K step"]
+      ]
+    },
     nodes: {
       title: "24-layer GLM across two H200 nodes",
       unit: "thousand packed tokens / second",
       labels: ["CP8\none node", "CP8\n4 + 4", "CP16\n8 + 8"],
       series: [
-        { name: "throughput", values: [17.026, 16.339, 30.913], color: "--cp-violet", bars: true }
+        { name: "throughput", values: [17.026, 16.339, 30.913], color: "--cp-violet", bars: true },
+        { name: "ideal from split CP8", values: [16.339, 16.339, 32.678], color: "--text-muted", dashed: true, noPoints: true }
       ],
       min: 0,
       max: 34,
@@ -199,7 +208,12 @@
     context.clearRect(0, 0, width, height);
 
     var colors = chartColors();
-    var margin = { top: 40, right: 24, bottom: 55, left: 58 };
+    var longLegend = data.series.some(function (series) { return series.name.length > 14; });
+    var legendColumns = width < 520
+      ? (longLegend ? 1 : Math.min(2, data.series.length))
+      : data.series.length;
+    var legendRows = Math.ceil(data.series.length / legendColumns);
+    var margin = { top: 40 + (legendRows - 1) * 18, right: 24, bottom: 55, left: 58 };
     var plotWidth = width - margin.left - margin.right;
     var plotHeight = height - margin.top - margin.bottom;
     var span = data.max - data.min;
@@ -235,8 +249,32 @@
       });
     });
 
+    var legendWidth = plotWidth / legendColumns;
+    data.series.forEach(function (series, index) {
+      var legendX = margin.left + (index % legendColumns) * legendWidth;
+      var legendY = 17 + Math.floor(index / legendColumns) * 18;
+      var color = css(series.color);
+      context.strokeStyle = color;
+      context.fillStyle = color;
+      context.lineWidth = 2.2;
+      if (series.bars) {
+        context.fillRect(legendX, legendY - 4, 12, 8);
+      } else {
+        context.setLineDash(series.dashed ? [6, 5] : []);
+        context.beginPath();
+        context.moveTo(legendX, legendY);
+        context.lineTo(legendX + 16, legendY);
+        context.stroke();
+        context.setLineDash([]);
+      }
+      context.textAlign = "left";
+      context.fillStyle = colors.text;
+      context.fillText(series.name, legendX + 23, legendY);
+    });
+    context.textAlign = "center";
+
     chartState.points = [];
-    data.series.forEach(function (series, seriesIndex) {
+    data.series.forEach(function (series) {
       var color = css(series.color);
       if (series.bars) {
         var barWidth = Math.min(82, xStep * 0.55);
@@ -252,35 +290,35 @@
 
       context.strokeStyle = color;
       context.lineWidth = 2.2;
+      context.setLineDash(series.dashed ? [6, 5] : []);
       context.beginPath();
       series.values.forEach(function (value, index) {
-        var x = margin.left + xStep * index;
+        var x = barMode
+          ? margin.left + xStep * (index + 0.5)
+          : margin.left + xStep * index;
         var y = margin.top + plotHeight * (data.max - value) / span;
         if (index === 0) context.moveTo(x, y);
         else context.lineTo(x, y);
       });
       context.stroke();
+      context.setLineDash([]);
 
-      series.values.forEach(function (value, index) {
-        var x = margin.left + xStep * index;
-        var y = margin.top + plotHeight * (data.max - value) / span;
-        context.fillStyle = colors.page;
-        context.strokeStyle = color;
-        context.lineWidth = 2.5;
-        context.beginPath();
-        context.arc(x, y, 5, 0, Math.PI * 2);
-        context.fill();
-        context.stroke();
-        chartState.points.push({ x: x, y: y, value: value, name: series.name, label: data.labels[index] });
-      });
-
-      var legendX = margin.left + seriesIndex * 150;
-      context.fillStyle = color;
-      context.fillRect(legendX, 15, 16, 3);
-      context.textAlign = "left";
-      context.fillStyle = colors.text;
-      context.fillText(series.name, legendX + 23, 17);
-      context.textAlign = "center";
+      if (!series.noPoints) {
+        series.values.forEach(function (value, index) {
+          var x = barMode
+            ? margin.left + xStep * (index + 0.5)
+            : margin.left + xStep * index;
+          var y = margin.top + plotHeight * (data.max - value) / span;
+          context.fillStyle = colors.page;
+          context.strokeStyle = color;
+          context.lineWidth = 2.5;
+          context.beginPath();
+          context.arc(x, y, 5, 0, Math.PI * 2);
+          context.fill();
+          context.stroke();
+          chartState.points.push({ x: x, y: y, value: value, name: series.name, label: data.labels[index] });
+        });
+      }
     });
   }
 
@@ -384,7 +422,6 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     initScaleFigure();
-    renderMask();
     initResults();
     initReadingState();
   });

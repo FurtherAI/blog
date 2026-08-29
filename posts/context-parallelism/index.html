@@ -40,7 +40,7 @@
           Context parallelism for prefix-tree attention, learned sparse attention,
           and linear recurrent layers, from one H200 to two nodes.
         </p>
-        <p class="meta">August 2026 &middot; 26 minute read</p>
+        <p class="meta">August 2026 &middot; 36 minute read</p>
       </header>
 
       <figure class="wide hero-figure" aria-labelledby="hero-caption">
@@ -64,11 +64,26 @@
       </figure>
 
       <p class="lead">
-        ART started this work for a simple reason: one GPU could not hold the training
-        rows we wanted. <a href="../prefix-tree-packing/">Prefix-tree packing</a> had
-        already removed the obvious duplication. A prompt shared by sixteen rollouts
-        existed once, not sixteen times. The next limit was the size of that unique
-        tree itself.
+        I started the CP project with three hypotheses: it could move less data than
+        tensor parallelism, hide that communication behind the operation it serves,
+        and lower memory per GPU. The most exciting possibility came from
+        <a href="../prefix-tree-packing/">prefix-tree packing</a>. Once a shared
+        prompt is stored once, a little more physical row capacity can hold many more
+        leaves and therefore many more trajectories per forward-backward pass.
+      </p>
+
+      <p class="lead-continuation">
+        My canonical <code>5K + 16x100</code> system-prompt workload barely benefits
+        from that capacity effect: both the prompt and generations are short for a
+        35B model on two H200s. Long shared context, long rollouts, or a model that can
+        fit only a small row under TP are different. What surprised me was that CP
+        also scaled much better than TP even after excluding prefix-tree reuse. At
+        four to eight ranks it was ahead in both memory and throughput; across two
+        nodes, <code>CP_N + EP_N</code> remained the best topology we tested. Only
+        after reaching the minimum model-parallel width did data parallelism become
+        the better axis to add. This post develops the algorithms behind that result,
+        including engineering work that moved at a pace only possible with Codex,
+        and then shows where the time and memory went.
       </p>
 
       <p>
@@ -108,14 +123,14 @@ saved tokens     = (m - 1) * P</code></pre>
           times, saving roughly <code>(m - 1) * P * (P + 1) / 2</code> attention pairs.
           A long shared context plus long rollouts fills a row quickly with useful new
           tokens, which is exactly where adding CP ranks can translate into more
-          trajectories per optimizer step.
+          trajectories per forward-backward pass.
         </p>
 
         <figure class="wide scale-figure interactive-figure" aria-labelledby="scale-caption">
           <div class="figure-head">
             <div>
-              <p class="figure-kicker">Physical row capacity</p>
-              <h3>Grow context, hold per-rank work nearly fixed</h3>
+              <p class="figure-kicker">Capacity example</p>
+              <h3>One 24K root, 8K completions, 64K per CP rank</h3>
             </div>
             <div class="segmented" role="group" aria-label="Context parallel size">
               <button type="button" data-cp="1">CP1</button>
@@ -125,17 +140,18 @@ saved tokens     = (m - 1) * P</code></pre>
             </div>
           </div>
           <div class="scale-stage">
-            <div class="capacity-row" id="capacity-row" aria-live="polite"></div>
+            <div class="capacity-comparison" id="capacity-row" aria-live="polite"></div>
             <div class="scale-metrics">
-              <div><span id="scale-tokens">4S</span><small>global physical tokens</small></div>
-              <div><span>S</span><small>target tokens per rank</small></div>
-              <div><span id="scale-rollouts">~4x</span><small>rollout capacity after the root</small></div>
+              <div><span id="scale-tokens">256K</span><small>global row capacity</small></div>
+              <div><span id="scale-tree-rollouts">29</span><small>prefix-tree trajectories</small></div>
+              <div><span id="scale-flat-rollouts">8</span><small>flattened trajectories</small></div>
+              <div><span id="scale-rollouts">3.63x</span><small>capacity ratio</small></div>
             </div>
           </div>
           <figcaption id="scale-caption">
-            Weak scaling increases both tokens and ranks. The target is not a fourfold
-            speedup on fixed work; it is four times the useful physical context at
-            nearly the same layer time and memory per GPU.
+            This is capacity arithmetic, not a speed measurement. Prefix-tree packing
+            pays the 24K root once; flattening pays it for every completion. CP then
+            grows the physical row while keeping 64K tokens on each rank.
           </figcaption>
         </figure>
 
@@ -144,18 +160,12 @@ saved tokens     = (m - 1) * P</code></pre>
           <div>
             <p>
               With equal completion length <code>C</code> and row capacity
-              <code>S</code>, independent sequences fit about
-              <code>S / (P + C)</code> completions. A tree pays <code>P</code> once,
-              then fits about <code>(S - P) / C</code> completions. For a 20K prompt
-              and 120K rollouts, a 500K tree holds four rollouts as
-              <code>20K + 4 * 120K</code>; flattening would require 560K for four
-              independent sequences. Larger fanout or a longer shared prompt widens
-              the gap.
-            </p>
-            <p>
-              This is an upper-bound systems argument, not a promise of unlimited
-              throughput. Rollout supply, optimizer work, expert routing, network
-              placement, and planning can become the next bottleneck.
+              <code>S</code>, flattened sequences fit
+              <code>floor(S / (P + C))</code> trajectories. A tree pays
+              <code>P</code> once, then fits <code>floor((S - P) / C)</code>. With a
+              24K root, 8K completions, and a 64K row per rank, CP1 fits five tree
+              leaves versus two flattened trajectories. CP8 grows the row to 512K
+              and fits 61 tree leaves versus 16 flattened trajectories.
             </p>
           </div>
         </details>
@@ -171,66 +181,122 @@ saved tokens     = (m - 1) * P</code></pre>
           kernel control. Varied short, dominant-prefix, medium-long, ragged depth-three,
           and true long-completion trees test the planner's generality.
         </p>
+
+        <div class="table-scroll workload-table-wrap">
+          <table>
+            <thead><tr><th>Workload</th><th>One repeated piece</th><th>What it isolates</th></tr></thead>
+            <tbody>
+              <tr><td>fixed short</td><td>5K root + 16 x 100</td><td>stable-shape kernel and launch control</td></tr>
+              <tr><td>varied short</td><td>5K root + 16 x clipped N(100, 32)</td><td>real completion variance and compile stability</td></tr>
+              <tr><td>dominant prefix</td><td>14,745 root + 16 x clipped N(921, 96)</td><td>one family dominates each row</td></tr>
+              <tr><td>medium-long</td><td>8K root + 8 x clipped N(1K, 128)</td><td>larger KV exchange and mixed ownership</td></tr>
+              <tr><td>completion chain</td><td>32K root + 2 x clipped N(32K, 4K)</td><td>segments that genuinely cross rank boundaries</td></tr>
+              <tr><td>depth-three tree</td><td>4K root + 4 x 2K + 16 x 512 + leaves</td><td>ancestor reuse beyond prompt/completion depth</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="table-note">
+          A piece is repeated until the packed row is full. Except for the fixed
+          control, completion lengths are resampled for every measured tree rather
+          than replaying the warmed input.
+        </p>
       </section>
 
       <section id="attention">
-        <h2>Attention is a set of rectangles</h2>
+        <h2>From zigzag to arbitrary work plans</h2>
 
         <p>
-          The key idea came from
-          <a href="https://github.com/SandAI-org/MagiAttention" target="_blank" rel="noopener">MagiAttention</a>:
-          an arbitrary sparse attention mask can be decomposed into simple FULL and
-          CAUSAL rectangles, balanced across ranks, and recombined exactly. For a
-          prefix tree, each segment contributes a full rectangle to each ancestor and
-          one causal rectangle to itself.
-        </p>
-
-        <pre><code>for segment in tree.topological_order:
-    for ancestor in segment.ancestors:
-        emit_full_slice(q=segment, kv=ancestor)
-    emit_causal_slice(q=segment, kv=segment)</code></pre>
-
-        <p>
-          ART adopted that intermediate representation and scheduling direction, not
-          MagiAttention's implementation. It does not use FFA CUDA, GroupCast,
-          GroupReduce, symmetric-memory transport, or Magi's Megatron fork. ART has
-          its own planner and cache, uses NCCL all-to-all for range movement, and runs
-          local rectangles through PyTorch FlexAttention with FlashAttention 4 where
-          supported. Custom Triton kernels gather and reduce noncontiguous head-major
-          ranges and differentiate the stage merge.
+          Causal attention is already a load-balancing problem before trees enter the
+          picture. If four ranks each own one contiguous quarter of a sequence, rank 0
+          evaluates only the top-left of the causal triangle while rank 3 evaluates
+          almost the whole width. Ring-attention systems commonly repair this with a
+          zigzag: split the row into eight chunks and assign owners
+          <code>0,1,2,3,3,2,1,0</code>, pairing cheap early queries with expensive late
+          queries.
         </p>
 
         <figure class="wide slice-figure" aria-labelledby="slice-caption">
-          <div class="slice-layout">
-            <div>
-              <p class="figure-kicker">Tree visibility</p>
-              <div class="mask-grid" id="mask-grid" aria-label="Prefix-tree causal attention mask"></div>
-            </div>
-            <div class="slice-arrow" aria-hidden="true">&rarr;</div>
-            <div>
-              <p class="figure-kicker">Rectangle program</p>
-              <div class="rectangle-program">
-                <div class="rect rect-full"><b>FULL</b><span>branch A &rarr; root</span></div>
-                <div class="rect rect-causal"><b>CAUSAL</b><span>branch A &rarr; A</span></div>
-                <div class="rect rect-full"><b>FULL</b><span>branch B &rarr; root</span></div>
-                <div class="rect rect-causal"><b>CAUSAL</b><span>branch B &rarr; B</span></div>
+          <div class="attention-evolution">
+            <div class="evolution-panel">
+              <p class="figure-kicker">1 / equal token slabs</p>
+              <div class="triangle-load" aria-label="Causal attention work grows for later query slabs">
+                <span style="--load: 25%"><b>R0</b><small>1 unit</small></span>
+                <span style="--load: 45%"><b>R1</b><small>3 units</small></span>
+                <span style="--load: 68%"><b>R2</b><small>5 units</small></span>
+                <span style="--load: 92%"><b>R3</b><small>7 units</small></span>
               </div>
+              <p>Equal tokens leave the late-query rank on the critical path.</p>
             </div>
-            <div class="slice-arrow" aria-hidden="true">&rarr;</div>
-            <div>
-              <p class="figure-kicker">Rank assignment</p>
-              <div class="rank-assignment">
-                <span class="rank-chip r0">0</span><span class="rank-chip r1">1</span>
-                <span class="rank-chip r2">2</span><span class="rank-chip r3">3</span>
+            <div class="evolution-panel">
+              <p class="figure-kicker">2 / causal zigzag</p>
+              <div class="chunk-strip zigzag-strip" aria-label="Zigzag owner sequence">
+                <span class="r0">0</span><span class="r1">1</span><span class="r2">2</span><span class="r3">3</span>
+                <span class="r3">3</span><span class="r2">2</span><span class="r1">1</span><span class="r0">0</span>
               </div>
-              <small>balanced predicted runtime,<br />not equal rectangle count</small>
+              <p>Pair early and late chunks when the mask is one causal triangle.</p>
+            </div>
+            <div class="evolution-panel evolution-wide">
+              <p class="figure-kicker">3 / prefix-tree planner</p>
+              <div class="tree-chunk-map">
+                <div class="tree-token-order" aria-label="Contiguous planning chunks in packed tree order">
+                  <span class="root-chunk">root 0</span><span class="root-chunk">root 1</span>
+                  <span class="branch-a-chunk">A0</span><span class="branch-a-chunk">A1</span>
+                  <span class="branch-b-chunk">B0</span><span class="branch-b-chunk">B1</span>
+                  <span class="branch-c-chunk">C0</span><span class="branch-c-chunk">C1</span>
+                </div>
+                <div class="owner-sets">
+                  <span><b>rank 0</b>{0, A1}</span>
+                  <span><b>rank 1</b>{1, C0}</span>
+                  <span><b>rank 2</b>{A0, B1}</span>
+                  <span><b>rank 3</b>{B0, C1}</span>
+                </div>
+              </div>
+              <p>Chunks bound search and range fragmentation; a rank can own any set of them.</p>
             </div>
           </div>
           <figcaption id="slice-caption">
-            The planner assigns attention work, not whole sequences. Rectangles can be
-            split and scheduled independently because their softmax statistics compose.
+            Zigzag is one hand-written solution for one mask. A prefix tree has
+            ragged branches and ancestor visibility, so ART computes the work matrix
+            and plans ownership instead.
           </figcaption>
         </figure>
+
+        <p>
+          The key inspiration from
+          <a href="https://github.com/SandAI-org/MagiAttention" target="_blank" rel="noopener">MagiAttention</a>
+          was to stop treating a sequence as the indivisible scheduling unit: break
+          attention into distributable query-key work and let a planner decide where
+          it runs. ART did not import Magi's FULL/CAUSAL slicing, FFA CUDA, GroupCast,
+          GroupReduce, symmetric-memory transport, or Megatron fork. The exact ART
+          mask can describe arbitrary tree visibility. Its compact tree builder often
+          emits full ancestor intervals and causal self intervals because those are
+          the natural geometry of a tree, not because the executor is restricted to
+          those two global shapes.
+        </p>
+
+        <pre><code>tree = parse_prefix_tree(group_ids, parent_ids)
+chunks = contiguous_chunks(tree.physical_order, target=512)
+pair_work[q_chunk, k_chunk] = count_visible_pairs(tree, chunks)
+
+owners, waves = search_assignments(
+    chunks,
+    pair_work,
+    measured_kernel_throughput,
+    exchange_bandwidth,
+    launch_and_range_costs,
+)
+rank_plan = materialize_local_stages(owners, waves, exact_mask=tree)</code></pre>
+
+        <p>
+          Contiguous chunks are planner atoms, not an attention restriction. Searching
+          every subset of individual tokens would be exponential and would produce
+          thousands of tiny transport ranges. Chunking bounds the candidate count and
+          keeps gather/scatter metadata compact. The ownership vector itself is
+          unrestricted: one rank may receive any collection of chunks, contiguous or
+          not. The planner converts that assignment into a local stage and a bounded
+          number of remote waves, each carrying exact query ranges, KV ranges, and
+          mask metadata.
+        </p>
 
         <h3>Forward: move KV while local attention runs</h3>
 
@@ -260,16 +326,23 @@ output, lse = exact_stage_merge(partials)</code></pre>
             <span class="key-layout">gather / merge</span>
             <span class="key-exposed">exposed wait</span>
           </div>
-          <div class="timeline" id="attention-timeline">
-            <div class="time-axis"><span>forward</span><span>backward</span></div>
-            <div class="lane"><label>rank 0</label><i class="comm c1"></i><i class="compute f1"></i><i class="layout m1"></i><i class="compute b1"></i><i class="comm c2"></i></div>
-            <div class="lane"><label>rank 1</label><i class="comm c1 delay-1"></i><i class="compute f1"></i><i class="layout m1"></i><i class="compute b1 wide-bar"></i><i class="comm c2"></i></div>
-            <div class="lane"><label>rank 2</label><i class="comm c1 delay-2"></i><i class="compute f1"></i><i class="layout m1"></i><i class="compute b1"></i><i class="comm c2"></i><i class="exposed e1"></i></div>
-            <div class="lane"><label>rank 3</label><i class="comm c1"></i><i class="compute f1 wide-bar"></i><i class="layout m1"></i><i class="compute b1"></i><i class="comm c2"></i></div>
+          <div class="stream-timeline" id="attention-timeline">
+            <div class="stream-panel">
+              <div class="stream-title"><strong>forward</strong><span>one representative rank</span></div>
+              <div class="stream-lane"><label>NCCL stream</label><i class="comm" style="--start: 1; --span: 28">fetch KV wave 0</i><i class="comm" style="--start: 30; --span: 22">fetch KV wave 1</i></div>
+              <div class="stream-lane"><label>gather stream</label><i class="layout" style="--start: 2; --span: 12">gather Q0</i><i class="layout" style="--start: 17; --span: 11">gather Q1</i></div>
+              <div class="stream-lane"><label>compute stream</label><i class="compute" style="--start: 2; --span: 31">local attn</i><i class="exposed" style="--start: 33; --span: 2"></i><i class="compute" style="--start: 35; --span: 25">remote 0</i><i class="layout" style="--start: 60; --span: 7">merge</i><i class="compute" style="--start: 67; --span: 25">remote 1</i><i class="layout" style="--start: 92; --span: 7">merge</i></div>
+            </div>
+            <div class="stream-panel">
+              <div class="stream-title"><strong>backward</strong><span>reverse stage order</span></div>
+              <div class="stream-lane"><label>compute stream</label><i class="layout" style="--start: 1; --span: 12">merge bwd</i><i class="compute" style="--start: 13; --span: 27">remote 1 bwd</i><i class="compute" style="--start: 40; --span: 25">remote 0 bwd</i><i class="compute" style="--start: 65; --span: 33">local bwd</i></div>
+              <div class="stream-lane"><label>NCCL stream</label><i class="comm" style="--start: 36; --span: 25">reduce dKV1</i><i class="comm" style="--start: 62; --span: 24">reduce dKV0</i></div>
+              <div class="stream-lane"><label>owner reduce</label><i class="layout" style="--start: 58; --span: 9">scatter-add</i><i class="layout" style="--start: 84; --span: 10">scatter-add</i></div>
+            </div>
           </div>
           <figcaption id="timeline-caption">
-            Conceptual schedule. Total NCCL duration is not the exposed cost: the
-            relevant quantity is communication not covered by useful kernels. In the
+            Separate CUDA streams make overlap visible. NCCL can span much of the
+            operation while exposing only the red gap on the compute stream. In the
             accepted fixed CP2/4/8 traces, exposed forward-plus-backward communication
             was about 0.53/0.54/0.70 ms.
           </figcaption>
@@ -310,10 +383,10 @@ O = exp(L_a - L) * O_a + exp(L_b - L) * O_b</code></pre>
           <p class="note-label">What ART wrote here</p>
           <p>
             The local attention math is upstream FlexAttention/FlashAttention. ART's
-            work is the tree-to-rectangle builder, runtime cost planner, cached sparse
-            block metadata, NCCL range exchange, ready-stage scheduler, head-major
-            Triton gather/reduce, FP32 exact merge, fused merge backward, and its
-            Megatron/autograd integration.
+            work is the exact tree-mask and chunk-work builder, runtime cost planner,
+            cached sparse block metadata, NCCL range exchange, ready-stage scheduler,
+            head-major Triton gather/reduce, FP32 exact merge, fused merge backward,
+            and its Megatron/autograd integration.
           </p>
         </aside>
       </section>
@@ -328,24 +401,33 @@ O = exp(L_a - L) * O_a + exp(L_b - L) * O_b</code></pre>
         </p>
 
         <figure class="wide semantics-figure" aria-labelledby="semantics-caption">
-          <div class="semantic-panel">
-            <p class="figure-kicker">Full causal tree</p>
-            <div class="mini-mask full-mask"></div>
-            <p>Ancestors plus the causal current segment.</p>
+          <div class="logical-path-panel">
+            <p class="figure-kicker">Physical storage is not logical distance</p>
+            <div class="physical-order">
+              <span class="root-token">root 0..5</span>
+              <span class="branch-a-token">A 6..9 <b>q</b></span>
+              <span class="branch-b-token">B 10..13</span>
+            </div>
+            <div class="path-comparison">
+              <div><b>causal path for q</b><span class="root-token">root</span><span class="branch-a-token">A0 A1 A2 q</span></div>
+              <div><b>SWA, W=5</b><span class="root-token faded-token">root tail</span><span class="branch-a-token">A0 A1 A2 q</span></div>
+              <p>Adjacent B tokens are siblings and remain invisible.</p>
+            </div>
           </div>
-          <div class="semantic-panel">
-            <p class="figure-kicker">Sliding window</p>
-            <div class="mini-mask window-mask"><span></span></div>
-            <p>Clip by logical <code>input_pos</code>, not packed offset.</p>
-          </div>
-          <div class="semantic-panel">
-            <p class="figure-kicker">Attention sink</p>
-            <div class="sink-visual"><span class="ordinary-keys"></span><b>+1</b></div>
-            <p>Add one denominator logit after the global merge.</p>
+          <div class="sink-merge-panel">
+            <p class="figure-kicker">Normalize the sink once</p>
+            <div class="sink-merge-tree">
+              <div><span>LSE local</span><span>LSE remote 0</span><span>LSE remote 1</span></div>
+              <i></i>
+              <strong>global ordinary-key LSE</strong>
+              <b>logaddexp</b>
+              <strong class="sink-node">one learned sink logit</strong>
+            </div>
           </div>
           <figcaption id="semantics-caption">
-            The tree visibility graph is shared. SWA constrains eligible positions;
-            a sink changes normalization without adding a physical key.
+            SWA clips the root-to-query logical path, not a physical packed interval.
+            The sink changes the global denominator after stage composition; it is
+            not a physical KV row and must not be counted once per stage.
           </figcaption>
         </figure>
 
@@ -354,11 +436,12 @@ O = exp(L_a - L) * O_a + exp(L_b - L) * O_b</code></pre>
         <p>
           Packed offsets have no semantic meaning across branches. Two neighboring
           physical tokens may belong to unrelated leaves, while a parent token far
-          away in storage can be nearby in one branch's logical sequence. ART builds
-          conservative sparse block topology from the tree and the min/max logical
-          positions in each block. The exact FlexAttention predicate handles partial
-          boundary blocks. This removed an earlier token-by-token CPU refinement
-          without introducing an SWA-specific execution path.
+          away in storage can be nearby in one branch's logical sequence. ART carries
+          <code>input_pos</code> through the CP plan, builds conservative sparse block
+          topology from each block's logical-position bounds, and leaves partial
+          boundary blocks to the exact FlexAttention predicate. This removed an
+          earlier token-by-token CPU refinement without introducing an SWA-specific
+          executor.
         </p>
 
         <h3>The sink is global, once</h3>
@@ -377,44 +460,77 @@ O = exp(L_a - L) * O_a + exp(L_b - L) * O_b</code></pre>
         <h2>GLM-5.2: distribute the learned index, too</h2>
 
         <p>
-          GLM-5.2 puts a learned indexer in front of sparse multi-head latent
-          attention. For each query, it scores visible raw-token candidates and keeps
-          a canonical top-k set. IndexShare layers reuse routes from a preceding full
-          indexer layer. Context parallelism therefore has to distribute both the
-          candidate search and the sparse attention that consumes its result.
+          GLM-5.2 is a 78-layer hybrid of sparse multi-head latent attention and MoE.
+          Hidden width is 6,144; attention has 64 heads, a 2,048-wide compressed query,
+          a 512-wide compressed KV latent, and 256-value dimensions per head. The
+          first three MLPs are dense; the remaining layers route into 256 experts plus
+          one shared expert. Before sparse MLA, a learned 32-head indexer scores every
+          visible candidate and selects 2,048 raw token IDs for each query.
+        </p>
+
+        <p>
+          Running that indexer in all 78 layers would be expensive. Layers are grouped
+          into <em>IndexShare</em> runs: a <code>full</code> layer computes routes, and
+          the following three <code>shared</code> layers reuse them. The first three
+          layers are all full; after that, the pattern repeats one full plus three
+          shared layers. Context parallelism therefore has two coupled jobs. It must
+          distribute the candidate search on full layers, and it must preserve a
+          canonical route object that later layers can reuse independent of rank
+          placement.
         </p>
 
         <figure class="wide glm-figure" aria-labelledby="glm-caption">
-          <div class="glm-flow">
-            <div class="flow-step"><b>1</b><span>tree-valid<br />candidate stages</span></div>
+          <div class="glm-layer-map">
+            <div class="glm-layer-main">
+              <p class="figure-kicker">One GLM attention layer</p>
+              <div class="glm-operation-strip">
+                <span>RMSNorm</span><i>&rarr;</i><span>Q/KV compression</span><i>&rarr;</i>
+                <span class="index-step">full or shared index</span><i>&rarr;</i>
+                <span class="sparse-step">sparse MLA</span><i>&rarr;</i><span>out projection</span>
+              </div>
+              <div class="glm-operation-strip mlp-strip">
+                <span>residual</span><i>&rarr;</i><span>RMSNorm</span><i>&rarr;</i>
+                <span>dense MLP or 256 routed + 1 shared expert</span>
+              </div>
+            </div>
+            <div class="indexshare-pattern">
+              <p class="figure-kicker">IndexShare schedule</p>
+              <div><b>F</b><b>F</b><b>F</b><b>F</b><span>S</span><span>S</span><span>S</span><b>F</b><span>S</span><span>S</span><span>S</span><em>...</em></div>
+              <small>F computes top-k; S reuses the preceding F routes.</small>
+            </div>
+          </div>
+          <div class="glm-cp-flow">
+            <div><b>1</b><span>tree-valid KV stages</span><code>[local] [remote 0] [remote 1]</code></div>
             <i>&rarr;</i>
-            <div class="flow-step"><b>2</b><span>local score +<br />raw token ID</span></div>
+            <div><b>2</b><span>score candidates</span><code>(score, raw token id)</code></div>
             <i>&rarr;</i>
-            <div class="flow-step emphasis"><b>3</b><span>canonical<br />global top-k</span></div>
+            <div><b>3</b><span>canonical global top-k</span><code>score desc, id asc</code></div>
             <i>&rarr;</i>
-            <div class="flow-step"><b>4</b><span>one combined<br />KV row space</span></div>
+            <div><b>4</b><span>concatenate KV stages</span><code>global id -> row offset</code></div>
             <i>&rarr;</i>
-            <div class="flow-step emphasis sparse"><b>5</b><span>one sparse MLA<br />fwd + bwd</span></div>
+            <div><b>5</b><span>existing sparse kernel</span><code>sparse_mla(q, KV, offsets)</code></div>
           </div>
           <div class="route-example">
             <span>stage A: <code>(.91, id 17)</code> <code>(.86, id 4)</code></span>
             <span>stage B: <code>(.91, id 9)</code> <code>(.72, id 23)</code></span>
-            <strong>top-3: <code>17, 9, 4</code></strong>
+            <strong>global top-3: <code>17, 9, 4</code></strong>
           </div>
           <figcaption id="glm-caption">
-            Scores merge in descending score and ascending raw-ID tie order. Global
-            IDs are remapped once into combined KV storage, preserving routes across
-            stage and rank boundaries.
+            The sparse kernel already consumes an explicit list of selected KV rows.
+            CP changes where candidates are found, then remaps the same canonical IDs
+            into one combined KV buffer before calling that kernel once.
           </figcaption>
         </figure>
 
         <p>
-          The distributed algorithm reuses the dense CP plan for candidate KV
-          movement. Each stage produces candidate scores paired with immutable global
-          token IDs. The query owner merges them with stable score-descending,
-          ID-ascending ordering, remaps the winners into one concatenated KV row, and
-          invokes sparse MLA once. Backward splits <code>dKV</code> at the saved stage
-          boundaries and reduces each range to its original owner.
+          That explicit-index interface is the important architectural affordance.
+          ART does not need to rewrite a complex sparse-attention kernel to understand
+          prefix trees or distributed stages. The dense CP plan fetches the exact KV
+          ranges visible to a query owner. Each stage emits candidate scores paired
+          with immutable global token IDs. The owner merges candidates with stable
+          score-descending, ID-ascending ordering, concatenates the stage KVs, remaps
+          winners to offsets in that buffer, and calls sparse MLA once. Backward splits
+          <code>dKV</code> at saved stage boundaries and returns each part to its owner.
         </p>
 
         <p>
@@ -441,9 +557,9 @@ O = exp(L_a - L) * O_a + exp(L_b - L) * O_b</code></pre>
             while using base-2 exponentials internally.
           </p>
           <div class="kernel-gains">
-            <div><strong>10.7x</strong><span>isolated backward gain<br />375.6 &rarr; 34.65 ms</span></div>
+            <div><strong>24.6%</strong><span>combined-KV operation<br />4.525 &rarr; 3.414 ms</span></div>
             <div><strong>4.5x</strong><span>canonical CP2 indexer<br />711.4 &rarr; 158.2 ms</span></div>
-            <div><strong>25.7%</strong><span>realistic backward gain<br />47.83 &rarr; 35.54 ms</span></div>
+            <div><strong>25.7%</strong><span>realistic sparse backward<br />47.834 &rarr; 35.537 ms</span></div>
           </div>
           <p>
             Later ART changes made query and key extents runtime-dynamic, grouped
@@ -452,6 +568,15 @@ O = exp(L_a - L) * O_a + exp(L_b - L) * O_b</code></pre>
             fixed partitioned-head precision, and added SM100 TCGEN dQ schedules with
             explicit shared-buffer synchronization. Those adaptations are a material
             part of the scaling result.
+          </p>
+          <p>
+            One isolated S8192/H64/K2048 stress probe measured
+            <code>375.605 -> 34.649 ms</code> in backward, or 10.8x. The tensor scope
+            was matched, but the baseline was ART's old generic Triton fallback and
+            the candidate was the repaired native TileLang kernel. It is useful proof
+            that the fallback was pathological at that geometry, not a claim that
+            realistic GLM CP became 10.8x faster. The representative production
+            backward gain is the 25.7% result above.
           </p>
         </aside>
 
@@ -475,48 +600,25 @@ O = exp(L_a - L) * O_a + exp(L_b - L) * O_b</code></pre>
         <h2>Recurrent layers turn the tree into a DAG</h2>
 
         <p>
-          Attention rectangles can run in almost any order because their softmax
+          Attention stages can run in almost any order because their softmax
           summaries merge. A recurrent child cannot start until its parent's final
-          state exists. ART represents the same prefix tree as an execution DAG and
-          shares one contract for tree dependencies, parent-state tables, canonical
-          segment metadata, depth scheduling, and layout exchange. The layer family
-          chooses how CP partitions the recurrence.
+          state exists. The same prefix tree is therefore an execution DAG: roots
+          precede children, siblings can run together, and a segment split across
+          ranks needs the state produced by its preceding shard.
         </p>
 
-        <pre><code>class LinearRecurrentContract(BaseModel):
-    partition_kind: Literal[
-        "token_sharded_chain",       # Qwen3.5 GDN
-        "head_sharded_full_tree",    # Nemotron Mamba-2
-    ]
-    projected_streams: tuple[ProjectedStreamSpec, ...]
-    states: tuple[RecurrentStateSpec, ...]
-    convolution_width: int
-    local_chunk_size: int</code></pre>
+        <p>
+          ART deliberately shares only the model-neutral tree parser: canonical
+          segment ranges, parent indices, and depth. GDN and Mamba then build different
+          plans because their state and communication algebra are different. A large
+          generic recurrent executor would hide those distinctions without removing
+          any real complexity.
+        </p>
 
-        <figure class="wide recurrent-figure" aria-labelledby="recurrent-caption">
-          <div class="recurrent-panel gdn-panel">
-            <p class="figure-kicker">GDN: token-sharded chain</p>
-            <div class="chain-ranks">
-              <span>tokens 0..a</span><i>&rarr;</i><span>a..b</span><i>&rarr;</i><span>b..c</span><i>&rarr;</i><span>c..T</span>
-            </div>
-            <div class="summary-row">
-              <code>(M0,E0)</code><code>(M1,E1)</code><code>(M2,E2)</code><code>(M3,E3)</code>
-            </div>
-            <p>All ranks keep a token shard; compact affine summaries establish each initial state.</p>
-          </div>
-          <div class="recurrent-panel mamba-panel">
-            <p class="figure-kicker">Mamba-2: head-sharded full tree</p>
-            <div class="head-ranks">
-              <span>heads 0..h</span><span>h..2h</span><span>2h..3h</span><span>3h..H</span>
-            </div>
-            <div class="full-tree-lines"><i></i><i></i><i></i><i></i></div>
-            <p>Each rank sees every tree token for a subset of heads, removing cross-rank state dependency.</p>
-          </div>
-          <figcaption id="recurrent-caption">
-            Both partitions preserve the same root-to-leaf state semantics. Their
-            communication scales with different model dimensions.
-          </figcaption>
-        </figure>
+        <pre><code>tree = parse_recurrent_prefix_tree(group_ids, parent_ids)
+
+gdn_plan   = plan_token_shards_and_affine_scans(tree, attention_layout)
+mamba_plan = plan_head_shards_and_scan_phases(tree, attention_layout)</code></pre>
 
         <h3>GDN: summarize a token shard</h3>
 
@@ -527,6 +629,35 @@ O = exp(L_a - L) * O_a + exp(L_b - L) * O_b</code></pre>
           often best as local forks: run the parent once, fan out its final state, and
           batch all children at that depth. Long segments can be split across ranks.
         </p>
+
+        <figure class="wide gdn-figure" aria-labelledby="gdn-caption">
+          <div class="gdn-dag">
+            <div class="dag-label">depth 0 / chained root</div>
+            <div class="gdn-chain-row">
+              <span>rank 0 tokens</span><span>rank 1 tokens</span><span>rank 2 tokens</span><span>rank 3 tokens</span>
+            </div>
+            <div class="gdn-summary-row">
+              <code>(M0,E0)</code><code>(M1,E1)</code><code>(M2,E2)</code><code>(M3,E3)</code>
+            </div>
+            <div class="gdn-scan-row">
+              <span>S0 = parent</span><span>S1 = f0(S0)</span><span>S2 = f1(S1)</span><span>S3 = f2(S2)</span>
+            </div>
+            <div class="dag-branch-lines" aria-hidden="true"><i></i><i></i><i></i></div>
+            <div class="dag-label">depth 1 / local sibling bucket</div>
+            <div class="gdn-children-row">
+              <span>child A</span><span>child B</span><span>child C</span><span>child D</span><span>child E</span><span>child F</span>
+            </div>
+          </div>
+          <div class="gdn-boundary-note">
+            <b>causal conv boundary</b>
+            <span>exchange only the preceding <code>K - 1</code> projected tokens</span>
+          </div>
+          <figcaption id="gdn-caption">
+            Token-heavy recurrence runs in parallel on each rank. The prefix scan
+            composes compact shard summaries to recover exact incoming states; sibling
+            children then run as one variable-length local bucket.
+          </figcaption>
+        </figure>
 
         <p>
           Splitting does not mean rank 1 waits while rank 0 loops over every token.
@@ -548,29 +679,68 @@ O = exp(L_a - L) * O_a + exp(L_b - L) * O_b</code></pre>
         </p>
 
         <details class="derivation derivation-large">
-          <summary>Inside the 64-token gated-delta chunk</summary>
+          <summary>Derive the gated-delta chunk and affine CP scan</summary>
           <div>
             <p>
-              For one token, the state decays, reads the value currently associated
-              with key <code>k_t</code>, and writes a gated correction toward
-              <code>v_t</code>. FLA batches 64 of these dependent updates. A lower
-              triangular solve constructs corrected writes <code>W, U</code>; the
-              chunk end is then:
+              Qwen projects input <code>x</code> into query, key, value, output gate,
+              write strength, and decay streams. A depthwise causal convolution of
+              width four runs over <code>q/k/v</code>, then <code>q</code> and
+              <code>k</code> are L2-normalized:
             </p>
-            <pre class="math-block"><code>S_end = exp(G_last) * S_start
-      + sum_i exp(G_last - G_i) * k_i * d_i^T</code></pre>
+            <pre class="math-block"><code>beta_t     = sigmoid(b_t)
+log_alpha_t = -exp(A_log) * softplus(a_t + dt_bias)
+alpha_t    = exp(log_alpha_t)
+
+S_pre_t = alpha_t * S_(t-1)
+d_t     = beta_t * (v_t - k_t^T S_pre_t)
+S_t     = S_pre_t + k_t d_t^T
+y_t     = q_t^T S_t</code></pre>
             <p>
-              Outputs use the same causal triangle, <code>y_i = q_i^T S_i</code>.
-              Applying the construction to a whole rank shard yields
-              <code>M, E</code>. For scalar summaries
-              <code>f(s)=A*s+B</code> and <code>g(s)=C*s+D</code>, composition is
-              <code>g(f(s))=(C*A)*s+(C*B+D)</code>. Associativity is what makes a
-              parallel prefix scan possible.
+              The correction is rank one in key space. It does not replace the whole
+              state with <code>outer(k_t, v_t)</code>. A serial loop is suitable for
+              one-token decode but not training, so FLA evaluates fixed 64-token
+              chunks with triangular matrix work.
             </p>
-            <div class="numeric-walk">
-              <div><b>token 0</b><span>alpha .8, beta .5, v 3</span><code>S: 0 &rarr; 1.5</code></div>
-              <div><b>token 1</b><span>alpha .8, beta .5, v 5</span><code>S: 1.5 &rarr; 3.1</code></div>
-            </div>
+
+            <p>
+              For one chunk, let <code>G_i</code> be cumulative log-decay through
+              token <code>i</code>. Unrolling the state before token <code>i</code>
+              gives:
+            </p>
+            <pre class="math-block"><code>S_pre_i = exp(G_i) S_start
+          + sum_(j&lt;i) exp(G_i - G_j) k_j d_j^T</code></pre>
+            <p>
+              Stack the 64 token deltas into <code>D</code>. Let <code>B</code> be
+              diagonal beta, and let the strictly lower-triangular matrix
+              <code>P[i,j] = exp(G_i-G_j) * k_i^T k_j</code> for
+              <code>j&lt;i</code>. Then:
+            </p>
+            <pre class="math-block"><code>(I + B P) D = B (V - K_decay_start S_start)
+
+A = (I + B P)^-1
+U = A (B V)
+W = A (B K_decay_start)
+D = U - W S_start</code></pre>
+            <p>
+              <code>I + BP</code> is lower triangular, so this is a small triangular
+              solve, not a general inverse. The chunk end state is:
+            </p>
+            <pre class="math-block"><code>S_end = exp(G_last) S_start
+      + sum_i exp(G_last - G_i) k_i d_i^T</code></pre>
+            <p>
+              Because <code>D</code> is affine in <code>S_start</code>, an entire
+              contiguous rank shard is also affine:
+            </p>
+            <pre class="math-block"><code>f_i(S) = M_i S + E_i
+
+f_B(f_A(S)) = (M_B M_A) S + (M_B E_A + E_B)</code></pre>
+            <p>
+              Composition is associative. Every rank computes <code>(M_i,E_i)</code>
+              from its own tokens in parallel; a distributed prefix scan returns the
+              composition before each rank, which yields its exact starting state.
+              Backward uses the transpose structure in reverse, with a suffix scan for
+              final-state gradients. No rank replays another rank's token recurrence.
+            </p>
           </div>
         </details>
 
@@ -590,29 +760,66 @@ O = exp(L_a - L) * O_a + exp(L_b - L) * O_b</code></pre>
         <h3>Nemotron Nano Mamba-2: shard heads instead</h3>
 
         <p>
-          Mamba-2 uses the other legal partition. One variable all-to-all exchanges
-          the combined projected streams <code>z, x, B, C, dt</code>. Each CP rank
-          receives every canonical tree token for a subset of state-space heads and
-          groups. It can then execute all root-to-leaf scans locally, followed by the
-          inverse all-to-all to restore attention token ownership.
+          NVIDIA Nemotron 3 Nano 30B-A3B interleaves 23 Mamba mixers, 23 MoE layers,
+          and six standard-attention layers in an exact 52-layer schedule. Its Mamba
+          mixer has 64 state-space heads, eight groups, state size 128, chunk size 128,
+          and a width-four causal convolution. Unlike GDN, its clean CP partition is
+          over heads rather than tokens.
         </p>
 
-        <pre><code>attention token layout
-  -> one A2A of projected z / x / B / C / dt
-head-sharded full tree
-  -> ART varlen SiLU causal convolution
-  -> official mamba_ssm chunk_scan_combined, FP32 state
-  -> inverse A2A
-attention token layout</code></pre>
+        <figure class="wide mamba-figure" aria-labelledby="mamba-caption">
+          <div class="mamba-pipeline">
+            <div><b>token owners</b><span>in_proj locally</span><code>[z | x B C dt]</code></div>
+            <i>&rarr;</i>
+            <div class="gate-stays"><b>keep z local</b><span>no gate traffic</span><code>token-sharded</code></div>
+            <div class="pipeline-break" aria-hidden="true"></div>
+            <div><b>one variable A2A</b><span>only x/B/C/dt</span><code>token -> head shards</code></div>
+            <i>&rarr;</i>
+            <div><b>physical conv once</b><span>unique tree segments</span><code>K - 1 parent tail</code></div>
+            <i>&rarr;</i>
+            <div><b>official SSD scan</b><span>all tokens, local heads</span><code>FP32 recurrent state</code></div>
+            <i>&rarr;</i>
+            <div><b>inverse A2A</b><span>restore token owners</span><code>gate norm + out_proj</code></div>
+          </div>
+          <div class="mamba-scan-note">
+            <span>complete parent chunks</span><i>&rarr;</i><span>saved final state</span><i>&rarr;</i>
+            <span>replay only residual suffix &lt; 128 with each child</span>
+          </div>
+          <figcaption id="mamba-caption">
+            Every rank sees the canonical tree for a subset of heads, so all recurrent
+            dependencies are local. The token-local gate never crosses the network.
+          </figcaption>
+        </figure>
+
+        <pre><code>projected, _ = mixer.in_proj(hidden_states)
+gate = projected[..., :inner]                 # remains on token owner
+recurrent = a2a(projected[..., inner:])        # x, B, C, dt only
+recurrent = physical_tree_conv(recurrent, plan)
+recurrent = mamba_chunk_scan_combined(recurrent, fp32_state=True)
+local = inverse_a2a(recurrent)
+return mixer.out_proj(mixer.norm(local, gate))</code></pre>
 
         <p>
-          ART did not write a replacement SSD kernel. The branch pins the official
-          <code>mamba_ssm 2.3.2.post1</code> scan. The original work is the generic
-          recurrent contract, physical-tree and canonical-scan bucketization,
-          feature-aware exchange plan and autograd, exact parent-state replay, and
-          reuse of ART's varlen convolution. This path is newer than the GDN and dense
-          executors; its design is included here, while its performance remains a
-          publication gate rather than an extrapolated chart.
+          ART did not replace the SSD math. It pins
+          <code>mamba_ssm 2.3.2.post1</code>'s
+          <code>mamba_chunk_scan_combined</code> and wraps the pinned native causal-conv
+          forward/backward. The original kernel work is around the tree: Triton
+          pack/unpack for variable all-to-all, fused scan-input gathers, repeated-token
+          gradient reduction, row/output assembly, and runtime token extents that do
+          not specialize when completion lengths change. The plan runs physical
+          causal convolution once over unique segments. At a branch, complete
+          128-token parent chunks become a saved state; only the residual suffix is
+          replayed with each child.
+        </p>
+
+        <p>
+          On B300, the exact 52-layer 128K CP2/EP2 model measured a 3.455131-second
+          median rank-max step and 10.129934% useful MFU across five steady samples
+          with 1.36% CV. No post-warm compilation, code generation, or autotuning was
+          observed. A reduced 39-layer workflow measured 43,624 physical tok/s in the
+          isolated trainer, 43,469 with matched live inputs, and 41,273 end to end.
+          The matched-core result is within 0.36% of isolation, which is the evidence
+          that the rewritten Mamba path survives the real training pipeline.
         </p>
       </section>
 
@@ -628,13 +835,100 @@ attention token layout</code></pre>
           exposed rank time.
         </p>
 
+        <h3>Build a work matrix before assigning owners</h3>
+
+        <p>
+          For attention, the planner first computes an exact matrix whose entry
+          <code>W[i,j]</code> is the number of visible query-key pairs between query
+          chunk <code>i</code> and key chunk <code>j</code>. This captures causal
+          triangles, full ancestor visibility, ragged branches, and empty
+          intersections in one object. Token count alone cannot distinguish two
+          assignments with the same query rows but very different visible KVs.
+        </p>
+
+        <pre class="math-block"><code>T_stage = launch
+        + visible_pairs / achieved_pair_throughput
+        + query_rows / merge_throughput
+        + range_count * range_latency
+        + remote_underfill_penalty
+
+T_exchange = collective_latency + bytes / achieved_bandwidth
+
+T_forward(rank) = simulate(local compute || ordered KV fetch waves)
+T_backward(rank) = max(stage compute path, asynchronous dKV completions)
+objective        = max_rank(T_forward + T_backward)</code></pre>
+
+        <p>
+          The forward simulator starts all remote exchanges, places local attention
+          on the compute path, and starts each remote stage at the later of compute
+          availability or its fetch-ready time. Backward walks stages in reverse and
+          tracks each asynchronous dKV reduction to completion. This is why the model
+          can prefer a plan with more total network time but less exposed network
+          time. Coefficients come from achieved kernel throughput, bandwidth, and
+          launch/range measurements, not theoretical FLOP counts alone.
+        </p>
+
+        <h3>Search a bounded neighborhood, not every token partition</h3>
+
+        <p>
+          With <code>C</code> chunks and <code>N</code> ranks there are
+          <code>N^C</code> raw ownership vectors. ART never enumerates them. It starts
+          from a contiguous assignment weighted by query work, tries a bounded number
+          of remote-wave counts, identifies the predicted slowest rank, and evaluates
+          moving only its highest-value candidate chunks. An accepted move must lower
+          predicted critical-path time. Search stops when no candidate improves the
+          objective or the step budget is exhausted; larger chunk sets tighten that
+          budget. Contiguous and folded layouts remain candidate seeds, not separate
+          execution paths.
+        </p>
+
+        <pre><code>best = None
+for waves in bounded_wave_counts:
+    owners = contiguous_seed(query_work)
+    for _ in bounded_steps:
+        slow = argmax(simulate(owners, waves).rank_time)
+        move = best_improving_move(
+            chunks=highest_value_chunks_owned_by(slow),
+            destinations=other_ranks,
+        )
+        if move is None:
+            break
+        owners = move.owners
+    best = min_by_predicted_max_rank_time(best, owners)</code></pre>
+
+        <p>
+          The chunks stay contiguous in physical token order so one ownership vector
+          materializes into a small number of range intersections. The rank's set of
+          chunks does not need to be contiguous. This is the compromise that makes the
+          search fast enough for per-input planning while retaining arbitrary tree
+          shapes.
+        </p>
+
+        <aside class="engineering-note planner-note">
+          <p class="note-label">One planner, architecture-aware facts</p>
+          <p>
+            Generic dense attention uses the wall-time simulator above. GLM adds a
+            model-derived work profile for every physical pipeline stage: projection
+            and sparse-attention FLOPs per query token, indexer tile pairs, KV HBM
+            traffic, fetch/reduce bytes, checkpoint/top-k memory, remote peer count,
+            and ownership-range count. Those layouts are compared by their physical
+            resource maxima and fragmentation; this is not falsely collapsed into one
+            universal millisecond coefficient. GDN has its own wall-time model because
+            its choice is local fork versus chained recurrence. It predicts local and
+            chain throughput, layout all-to-all, summary bytes, prefix/suffix scans,
+            parent-state exchange, and model dimensions fitted across 9B, 35B, and
+            397B shapes.
+          </p>
+        </aside>
+
         <p>
           This matters most at decision boundaries. A planner tuned to make one
           benchmark choose "mixed" instead of "all local" will fail as soon as a
           completion grows by a few tokens. A runtime model should predict both plans'
-          actual time and switch where the curves meet. GDN's current model is fitted
-          across Qwen3.5 9B, 35B, and 397B shapes as a function of dimensions, not a
-          table of model names.
+          actual time and switch where the curves meet. Otherwise adding one token can
+          flip from a good local plan to a catastrophically slower chain plan. The
+          runtime model is evaluated on held-out shapes and workloads, not selected to
+          force one benchmark's desired ownership class.
         </p>
 
         <div class="cadence-table-wrap">
@@ -657,6 +951,15 @@ attention token layout</code></pre>
           counts. A one-second kernel that recompiles every time a rollout changes
           length is not a one-second kernel in training.
         </p>
+
+        <p>
+          The CPU builds the next immutable plan while the current microbatch runs.
+          GPU block metadata is then materialized once and reused by every compatible
+          layer. The operation labs report tree construction, CPU search, GPU metadata,
+          forward, backward, communication spans, and exposed waits separately. No
+          setup bucket is moved outside the measurement simply because production can
+          usually hide it with lookahead.
+        </p>
       </section>
 
       <section id="results">
@@ -675,6 +978,7 @@ attention token layout</code></pre>
             <button type="button" role="tab" aria-selected="true" data-result="dense">Dense attention</button>
             <button type="button" role="tab" aria-selected="false" data-result="glm">GLM sparse MLA</button>
             <button type="button" role="tab" aria-selected="false" data-result="gdn">GDN</button>
+            <button type="button" role="tab" aria-selected="false" data-result="mamba">Mamba-2</button>
             <button type="button" role="tab" aria-selected="false" data-result="nodes">Two nodes</button>
           </div>
           <div class="chart-shell">
@@ -699,6 +1003,17 @@ attention token layout</code></pre>
           19.530/20.498 ms varied. That is the behavior weak scaling is supposed to
           produce: 4x the work from CP2 to CP8 for about 5% to 6% more layer
           time.
+        </p>
+
+        <p>
+          The chart normalizes each series to CP1 and draws ideal weak scaling at
+          1.0x. The visible jump is CP1 to CP2, not continued degradation with every
+          rank. CP1 has one local attention call and no transport or stage merge. CP2
+          activates a remote KV exchange, another attention stage, FP32 softmax merge,
+          and inverse dKV reduction. Those fixed distributed costs add about 2.2 ms on
+          the short workload. From CP2 to CP8, local visible-pair work remains roughly
+          fixed and most additional exchange stays under attention, so four times the
+          global work adds only 0.9 to 1.1 ms.
         </p>
 
         <div class="table-scroll">
@@ -795,6 +1110,15 @@ attention token layout</code></pre>
           largest single architecture-specific optimization target.
         </p>
 
+        <p>
+          GLM shows the same fixed distributed onset more strongly: CP1 has no route
+          union or remote KV stage, while CP2 starts candidate exchange, canonical
+          top-k merge, combined-KV assembly, and dKV return. The operation rises from
+          519.3 to 645.5 ms, then stays in a 633.9-669.4 ms band through CP8 as tokens
+          grow another 4x. The ideal line makes that one-time onset distinct from the
+          subsequent weak-scaling slope.
+        </p>
+
         <h3>Recurrent CP is flatter on local/mixed trees than all-chain trees</h3>
 
         <div class="table-scroll">
@@ -814,6 +1138,28 @@ attention token layout</code></pre>
           exposed. This is still linear recurrent work spread across ranks, not full
           prefix replay, but its constant factors differ from dense attention's highly
           overlapped KV stages.
+        </p>
+
+        <h3>Mamba-2 reaches the live pipeline</h3>
+
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Nemotron scope</th><th>topology</th><th>tokens / shape</th><th>result</th></tr></thead>
+            <tbody>
+              <tr><td>exact 52-layer isolated model</td><td>CP2/EP2, B300</td><td>128K</td><td>3.455131 s, 10.129934% useful MFU</td></tr>
+              <tr><td>reduced 39-layer isolated</td><td>matched topology</td><td>workflow fixture</td><td>43,624 physical tok/s</td></tr>
+              <tr><td>reduced 39-layer matched-core</td><td>live inputs</td><td>same fixture</td><td>43,469 physical tok/s</td></tr>
+              <tr><td>reduced 39-layer end to end</td><td>full pipeline</td><td>same fixture</td><td>41,273 physical tok/s</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          The result tab compares the three reduced-model throughput scopes rather
+          than inventing a CP1-to-CP8 curve that was not measured. Matched-core retains
+          99.64% of isolated throughput, and end to end retains 94.61%. The exact model
+          run separately proves that all 52 layers, the native hybrid schedule, and
+          128K prefix-tree row execute at steady state without shape recompilation.
         </p>
 
         <h3>The full model retains the operation result</h3>
@@ -871,7 +1217,7 @@ attention token layout</code></pre>
           <li><strong>Sparse backward.</strong> GLM sparse MLA backward is still the dominant operation bucket.</li>
           <li><strong>Cold roles.</strong> Dynamic extents prevent token-shape recompiles, but every static kernel role must still be warmed.</li>
           <li><strong>Hardware backends.</strong> The B300 Triton/Flash gap needs its own optimization and validation.</li>
-          <li><strong>Mamba evidence.</strong> The Nemotron path needs a changing-shape operation and full-model matrix before a speed claim.</li>
+          <li><strong>Mamba scaling evidence.</strong> The exact CP2 and live-pipeline results are qualified; a CP1/2/4/8 weak-scaling matrix has not been measured and is not extrapolated here.</li>
         </ul>
 
         <p>
@@ -914,6 +1260,13 @@ attention token layout</code></pre>
               <code>f49e3691</code>. Multinode numbers and artifact paths are recorded
               in the ART multinode scaling report at the source revision above.
             </p>
+            <p>
+              Nemotron Mamba evidence comes from PR 819 at ART
+              <code>4013796f96</code>. The exact-model result is 52 layers, 128K,
+              TP1/CP2/EP2/PP1, BF16, compile enabled, on B300. The reduced 39-layer
+              isolated, matched-core, and E2E figures use the same qualified workflow
+              input contract.
+            </p>
           </div>
         </details>
 
@@ -923,7 +1276,7 @@ attention token layout</code></pre>
             <table class="provenance-table">
               <thead><tr><th>Component</th><th>Source / inspiration</th><th>ART contribution</th></tr></thead>
               <tbody>
-                <tr><td>slice IR</td><td>MagiAttention FULL/CAUSAL slices</td><td>prefix-tree builder, runtime model, ART integration</td></tr>
+                <tr><td>attention work planning</td><td>MagiAttention's decomposition-and-planning direction</td><td>arbitrary prefix-tree masks, bounded chunks, runtime search, ART integration</td></tr>
                 <tr><td>local dense attention</td><td>PyTorch FlexAttention / FlashAttention 4</td><td>stage construction, metadata, exact composition</td></tr>
                 <tr><td>range movement</td><td>Triton programming model</td><td>head-major gather/reduce and fused merge backward</td></tr>
                 <tr><td>SWA and sink</td><td>model semantics</td><td>logical-position tree masks and one-time global sink composition</td></tr>
@@ -931,7 +1284,7 @@ attention token layout</code></pre>
                 <tr><td>distributed indexer</td><td>GLM-5.2 architecture</td><td>tree-valid stages, canonical global top-k, route sharing</td></tr>
                 <tr><td>GDN recurrence</td><td>FLA gated-delta kernels</td><td>tree DAG, affine CP scans, state/gradient orchestration</td></tr>
                 <tr><td>varlen convolution</td><td>Megatron design reference, Triton</td><td>ART GELU/SiLU forward/backward and tail scans</td></tr>
-                <tr><td>Mamba SSD</td><td>official <code>mamba_ssm</code></td><td>tree buckets, head/group A2A, state replay, recurrent contract</td></tr>
+                <tr><td>Mamba SSD</td><td>official <code>mamba_ssm 2.3.2.post1</code></td><td>physical-tree planning, projected-stream A2A, fused tree layout, bounded suffix replay</td></tr>
               </tbody>
             </table>
           </div>
@@ -947,6 +1300,7 @@ attention token layout</code></pre>
             <li><a href="https://github.com/state-spaces/mamba" target="_blank" rel="noopener">Official Mamba implementation</a></li>
             <li><a href="https://github.com/openpipe/art/commit/f4058260" target="_blank" rel="noopener">ART combined-KV sparse MLA</a></li>
             <li><a href="https://github.com/openpipe/art/commit/979b02de" target="_blank" rel="noopener">ART dynamic, grouped GLM indexer and dKV work</a></li>
+            <li><a href="https://github.com/OpenPipe/ART/pull/819" target="_blank" rel="noopener">ART Nemotron Mamba-2 implementation and evidence</a></li>
           </ul>
         </details>
       </section>
