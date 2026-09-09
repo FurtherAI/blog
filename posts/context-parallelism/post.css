@@ -10,9 +10,9 @@
 }
 html[data-theme='dark'] {
   color-scheme: dark;
-  --surface-page: #141b1d; --surface-card: #1c282b; --surface-code: #1d2b2e;
-  --text-primary: #e6eef0; --text-secondary: #bacdd0; --text-muted: #9ab3b8;
-  --hairline: #3b5157; --accent: #80d5cc;
+  --surface-page: #171717; --surface-card: #222222; --surface-code: #252525;
+  --text-primary: #ededed; --text-secondary: #c6c6c6; --text-muted: #aaaaaa;
+  --hairline: #444444; --accent: #80d5cc;
   --cp-blue: #88b6ff; --cp-cyan: #65d4df; --cp-green: #81d6a1;
   --cp-violet: #b9a0f0; --cp-magenta: #e6a1cd;
 }
