@@ -55,7 +55,7 @@
 .cpv .cpv-tree-branches > div:last-child::before { left: 0; border-left: 0; border-right: 1px solid var(--hairline); }
 .cpv .cpv-selected { outline: 2px solid var(--text-primary); outline-offset: 2px; }
 .cpv .cpv-matrix { width: 100%; border-collapse: separate; border-spacing: 3px; table-layout: fixed; font: 14px/1 var(--mono); }
-.cpv .cpv-matrix :is(th, td) { padding: 0; height: 30px; text-align: center; border: 0; font-size: 14px; color: var(--text-primary); }
+.cpv .cpv-matrix :is(th, td) { padding: 0; height: 30px; text-align: center; vertical-align: middle; border: 0; font-size: 14px; color: var(--text-primary); }
 .cpv .cpv-matrix th:first-child { font-family: var(--sans); }
 .cpv .cpv-matrix .cpv-visible { background: color-mix(in srgb, var(--color) 22%, var(--surface-page)); color: var(--color); }
 .cpv .cpv-invisible { background: var(--surface-code); color: var(--text-muted); }
