@@ -1,0 +1,1226 @@
+Warning: truncated output (original token count: 42435)
+Total output lines: 1271
+
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Context Parallelism in ART: From One Query to a Distributed Tree</title>
+<meta name="description" content="A technical guide to ART context parallelism: attention merging, runtime planning, sparse MLA, Gated DeltaNet, and Mamba-2, with worked examples and derivations.">
+<script>document.documentElement.dataset.theme = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');</script>
+<script>
+(function () {
+  var stored = localStorage.getItem("theme");
+  if (stored) document.documentElement.setAttribute("data-theme", stored);
+
+  function label(btn) {
+    var current = document.documentElement.getAttribute("data-theme");
+    var dark = current === "dark" ||
+      (!current && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    btn.textContent = dark ? "Light" : "Dark";
+  }
+
+  window.addEventListener("DOMContentLoaded", function () {
+    var btn = document.querySelector("[data-theme-toggle]");
+    if (!btn) return;
+    label(btn);
+    btn.addEventListener("click", function () {
+      var current = document.documentElement.getAttribute("data-theme");
+      var next = current === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      localStorage.setItem("theme", next);
+      label(btn);
+    });
+  });
+})();
+
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --surface-page: #fcfdfd; --surface-card: #f1f5f6; --surface-code: #edf2f4;
+  --text-primary: #192729; --text-secondary: #405356; --text-muted: #556c70;
+  --hairline: #ccd8db; --accent: #126970;
+  --cp-blue: #2c64b4; --cp-cyan: #087884; --cp-green: #26824f;
+  --cp-violet: #7553b6; --cp-magenta: #a64381;
+  --sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+}
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --surface-page: #171717; --surface-card: #222222; --surface-code: #252525;
+  --text-primary: #ededed; --text-secondary: #c6c6c6; --text-muted: #aaaaaa;
+  --hairline: #444444; --accent: #80d5cc;
+  --cp-blue: #88b6ff; --cp-cyan: #65d4df; --cp-green: #81d6a1;
+  --cp-violet: #b9a0f0; --cp-magenta: #e6a1cd;
+}
+* { box-sizing: border-box; letter-spacing: 0; }
+html { scroll-behavior: smooth; scroll-padding-top: 32px; }
+body { margin: 0; background: var(--surface-page); color: var(--text-primary); font: 17px/1.8 var(--sans); }
+a { color: var(--accent); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { text-decoration-thickness: 2px; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visible { outline: 3px solid var(--cp-blue); outline-offset: 4px; }
+.skip-link { position: absolute; top: -80px; left: 20px; z-index: 10; background: var(--surface-page); padding: 8px 16px; }
+.skip-link:focus { top: 12px; }
+.site-header { max-width: 1456px; margin: auto; padding: 24px 40px; display: flex; justify-content: space-between; align-items: center; gap: 20px; border-bottom: 1px solid var(--hairline); font-size: 14px; }
+.brand { color: var(--text-primary); font-weight: 800; text-decoration: none; }
+.site-header nav { display: flex; align-items: center; gap: 24px; }
+.site-header button { background: transparent; border: 0; border-left: 1px solid var(--hairline); padding: 0 0 0 20px; color: var(--text-secondary); min-width: 62px; }
+.page-layout { max-width: 1416px; margin: auto; padding: 0 32px; display: grid; grid-template-columns: 210px minmax(0, 1020px); gap: 48px; }
+.contents { padding-top: 56px; font-size: 13px; line-height: 1.6; }
+.contents nav { position: sticky; top: 32px; }
+.contents-menu { border: 0; margin: 0; position: sticky; top: 32px; }
+.contents-menu > summary { display: none; }
+.contents-menu[open] > summary { border: 0; margin: 0; }
+.contents-menu nav { position: static; }
+.contents p { font-weight: 700; color: var(--text-primary); margin: 0 0 14px; }
+.contents a { display: block; color: var(--text-muted); padding: 6px 0; text-decoration: none; }
+.contents a:hover { color: var(--accent); text-decoration: underline; }
+main { min-width: 0; padding: 64px 0 48px; }
+article { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 760px) minmax(0, 1fr); }
+article > *, section > * { grid-column: 2; min-width: 0; }
+article > section { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; }
+.post-header { margin-bottom: 28px; }
+.eyebrow, .section-number { font-size: 13px; font-weight: 600; color: var(--text-muted); margin: 0 0 14px; }
+h1 { font-size: 44px; line-height: 1.16; font-weight: 750; margin: 0 0 18px; overflow-wrap: anywhere; }
+.subtitle { font-size: 25px; line-height: 1.45; color: var(--text-secondary); margin: 0 0 18px; }
+.meta { font-size: 13px; color: var(--text-muted); margin: 0 0 32px; }
+.lead { font-size: 21px; line-height: 1.65; margin: 0; }
+p { margin: 0 0 22px; }
+section { padding-top: 80px; }
+.section-number { padding-top: 22px; border-top: 1px solid var(--hairline); }
+h2 { font-size: 31px; line-height: 1.32; margin: 0 0 18px; font-weight: 700; text-wrap: balance; }
+h3 { font-size: 23px; line-height: 1.4; margin: 24px 0 16px; font-weight: 650; }
+h4 { font-size: 18px; line-height: 1.5; margin: 24px 0 12px; }
+.section-answer { font-size: 20px; line-height: 1.6; color: var(--text-secondary); margin-bottom: 28px; }
+strong { font-weight: 650; }
+code { font-family: var(--mono); font-size: .86em; overflow-wrap: anywhere; background: var(--surface-code); padding: 1px 4px; border-radius: 3px; }
+pre { max-width: 100%; overflow-x: auto; white-space: pre; padding: 20px 22px; border-left: 3px solid var(--accent); background: var(--surface-code); color: var(--text-primary); font: 13px/1.9 var(--mono); margin: 8px 0 28px; tab-size: 4; }
+pre code { background: transparent; padding: 0; font: inherit; }
+.equation { font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cp-figure { grid-column: 1 / -1; margin: 24px 0 36px; min-width: 0; }
+figcaption { color: var(--text-secondary); font-size: 14px; line-height: 1.7; max-width: 760px; margin: 16px auto 0; }
+details { border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); margin: 12px 0 24px; }
+details + details { margin-top: -25px; }
+summary { cursor: pointer; color: var(--accent); padding: 18px 0; font-size: 16px; line-height: 1.6; font-weight: 600; }
+details[open] summary { border-bottom: 1px solid var(--hairline); margin-bottom: 24px; }
+.proof { font-size: 16px; line-height: 1.85; padding: 0 0 8px 16px; border-left: 2px solid var(--hairline); }
+.proof .equation { font-size: 13px; padding: 16px; }
+.proof h3 { font-size: 20px; }
+.table-wrap { grid-column: 1 / -1; overflow-x: auto; margin: 8px 0 22px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; line-height: 1.65; font-variant-numeric: tabular-nums; }
+th { text-align: left; font-weight: 650; color: var(--text-primary); border-bottom: 2px solid var(--hairline); padding: 14px 12px; vertical-align: bottom; }
+td { padding: 12px; border-bottom: 1px solid var(--hairline); vertical-align: top; color: var(--text-secondary); }
+caption { text-align: left; margin-bottom: 12px; font-weight: 600; color: var(--text-primary); }
+.numeric td:not(:first-child), .numeric th:not(:first-child) { text-align: right; white-space: nowrap; }
+.table-note, .source { font-size: 13px; line-height: 1.75; color: var(--text-muted); }
+.callout { border-left: 3px solid var(--cp-blue); padding: 6px 0 6px 22px; margin: 8px 0 28px; }
+.callout p:last-child { margin-bottom: 0; }
+ul, ol { padding-left: 24px; margin: 0 0 24px; }
+li { padding-left: 4px; margin-bottom: 12px; }
+footer { max-width: 760px; margin: 80px auto 0; border-top: 1px solid var(--hairline); padding-top: 24px; display: flex; justify-content: space-between; gap: 20px; font-size: 13px; color: var(--text-muted); }
+@media (min-width: 1440px) { .page-layout { gap: 70px; } }
+@media (max-width: 1180px) {
+  .page-layout { grid-template-columns: minmax(0, 1fr); max-width: 1020px; padding: 0 28px; }
+  .contents { padding-top: 22px; }
+  .contents-menu { position: static; }
+  .contents nav { position: static; display: flex; flex-wrap: wrap; gap: 2px 18px; }
+  .contents p { flex-basis: 100%; margin-bottom: 4px; }
+  .contents a { padding: 3px 0; }
+  main { padding-top: 36px; }
+}
+@media (max-width: 600px) {
+  body { font-size: 16px; line-height: 1.85; }
+  .site-header { padding: 18px; gap: 16px; }
+  .site-header nav { gap: 14px; font-size: 12px; }
+  .site-header nav a:first-child { display: none; }
+  .page-layout { padding: 0 18px; }
+  .contents { font-size: 12px; }
+  .contents-menu > summary { display: list-item; padding: 4px 0; font-size: 14px; }
+  .contents-menu nav p { display: none; }
+  .contents-menu[open] nav { padding-top: 12px; }
+  .contents nav { gap: 2px 14px; }
+  h1 { font-size: 34px; }
+  h2 { font-size: 27px; text-wrap: initial; }
+  h3 { font-size: 22px; }
+  .subtitle { font-size: 22px; }
+  .lead, .section-answer { font-size: 19px; }
+  section { padding-top: 54px; }
+  pre, .equation { font-size: 12px; padding: 14px; }
+  .proof { padding-left: 12px; }
+  .proof .equation { font-size: 12px; }
+  td, th { padding: 10px; }
+  footer { flex-direction: column; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+@media print {
+  .site-header, .contents, footer, button { display: none !important; }
+  .page-layout { display: block; padding: 0; }
+  main { padding: 0; }
+  body { font-size: 11pt; color: #000; background: #fff; }
+  .cp-figure, pre, table { break-inside: avoid; }
+}
+
+</style>
+<style>
+/* Figures own their layout and type scale; article styles remain outside this scope. */
+.cp-figure [data-figure] {
+  container-type: inline-size;
+  color: var(--text-primary);
+  font: 15px/1.6 var(--sans);
+  letter-spacing: 0;
+  min-width: 0;
+}
+.cpv *, .cpv *::before, .cpv *::after { box-sizing: border-box; letter-spacing: 0; }
+.cpv :is(p, ol, table, section, details) { margin: 0; max-width: none; }
+.cpv :is(strong, b) { color: inherit; font-weight: 650; }
+.cpv :is(small, code, output) { font-size: 14px; line-height: 1.6; }
+.cpv code, .cpv output { font-family: var(--mono); overflow-wrap: anywhere; }
+.cpv small { color: var(--text-secondary); }
+.cpv .cpv-toolbar { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; justify-content: space-between; padding: 0 0 18px; border-bottom: 1px solid var(--hairline); margin-bottom: 20px; }
+.cpv .cpv-title { font-size: 18px; line-height: 1.4; }
+.cpv .cpv-control { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 14px; max-width: 100%; }
+.cpv :is(select, button) { color: var(--text-primary); background: var(--surface-page); font: 14px/1.5 var(--sans); border: 1px solid var(--hairline); border-radius: 3px; cursor: pointer; max-width: 100%; }
+.cpv select { padding: 8px 28px 8px 10px; }
+.cpv button { padding: 9px 12px; min-height: 40px; text-wrap: balance; }
+.cpv :is(button, select, input, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.cpv .cpv-choices { display: flex; flex-wrap: wrap; gap: 0; }
+.cpv .cpv-choices button { border-radius: 0; margin-right: -1px; }
+.cpv .cpv-choices button[aria-pressed="true"] { color: var(--cp-blue); background: color-mix(in srgb, var(--cp-blue) 10%, var(--surface-page)); border-color: var(--cp-blue); z-index: 1; }
+.cpv input[type="range"] { accent-color: var(--cp-blue); width: 130px; max-width: 100%; }
+.cpv .cpv-body { min-width: 0; }
+.cpv .cpv-note { color: var(--text-secondary); font-size: 14px; line-height: 1.6; margin: 12px 0; }
+.cpv .cpv-body > .cpv-note:first-child { margin-top: 0; }
+.cpv .cpv-label { font-size: 14px; font-weight: 600; margin: 16px 0 10px; }
+.cpv .cpv-takeaway { padding: 16px 0 0; margin-top: 20px; border-top: 1px solid var(--hairline); font-size: 15px; line-height: 1.65; }
+.cpv .cpv-legend { display: flex; flex-wrap: wrap; gap: 10px 24px; margin: 16px 0; font-size: 14px; color: var(--text-secondary); }
+.cpv .cpv-legend > span { display: flex; align-items: baseline; gap: 8px; }
+.cpv .cpv-swatch { display: inline-block; background: var(--color); width: 12px; height: 12px; flex: 0 0 12px; }
+.cpv .cpv-equations { display: flex; flex-direction: column; gap: 8px; border-left: 2px solid var(--cp-blue); padding: 10px 16px; background: var(--surface-code); font: 14px/1.75 var(--mono); overflow-wrap: anywhere; }
+.cpv .cpv-capacity-stats, .cpv .cpv-schedule-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--hairline); margin: 20px 0; gap: 20px; padding: 0 0 20px; }
+.cpv :is(.cpv-capacity-stats, .cpv-schedule-summary) > span { font-size: 14px; color: var(--text-secondary); }
+.cpv :is(.cpv-capacity-stats, .cpv-schedule-summary) b { display: block; color: var(--text-primary); font-size: 26px; line-height: 1.3; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+.cpv .cpv-capacity-row { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 18px; align-items: center; margin: 24px 0; }
+.cpv .cpv-capacity-row strong, .cpv .cpv-capacity-row div > span { display: block; }
+.cpv .cpv-capacity-row div > span { font-size: 14px; color: var(--text-secondary); }
+.cpv .cpv-capacity-track { display: flex; height: 48px; min-width: 0; }
+.cpv .cpv-capacity-track > span { min-width: 0; border-right: 1px solid var(--surface-page); }
+.cpv .cpv-root-piece { background: var(--cp-blue); }
+.cpv .cpv-leaf-piece { background: var(--cp-green); }
+.cpv .cpv-ownership-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, 1fr); gap: 32px; }
+.cpv .cpv-tree-root { margin: 12px auto 0; text-align: center; position: relative; padding-bottom: 22px; }
+.cpv .cpv-tree-root::after { content: ""; width: 1px; height: 22px; position: absolute; bottom: 0; left: 50%; background: var(--hairline); }
+.cpv .cpv-token-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 8px; }
+.cpv .cpv-token { width: 34px; height: 36px; display: inline-grid; place-items: center; font: 14px var(--mono); border-bottom: 3px solid var(--color); background: color-mix(in srgb, var(--color) 10%, var(--surface-page)); }
+.cpv .cpv-rank-0 { --color: var(--cp-blue); }
+.cpv .cpv-rank-1 { --color: var(--cp-violet); }
+.cpv .cpv-tree-branches { display: grid; grid-template-columns: 1fr 1fr; text-align: center; }
+.cpv .cpv-tree-branches > div { padding-top: 20px; position: relative; }
+.cpv .cpv-tree-branches > div::before { content: ""; position: absolute; border-top: 1px solid var(--hairline); border-left: 1px solid var(--hairline); width: 50%; height: 14px; top: 0; left: 50%; }
+.cpv .cpv-tree-branches > div:last-child::before { left: 0; border-left: 0; border-right: 1px solid var(--hairline); }
+.cpv .cpv-selected { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.cpv .cpv-matrix { width: 100%; border-collapse: separate; border-spacing: 3px; table-layout: fixed; font: 14px/1 var(--mono); }
+.cpv .cpv-matrix :is(th, td) { padding: 0; height: 30px; text-align: center; vertical-align: middle; border: 0; font-size: 14px; color: var(--text-primary); }
+.cpv .cpv-matrix th:first-child { font-family: var(--sans); }
+.cpv .cpv-matrix .cpv-visible { background: color-mix(in srgb, var(--color) 22%, var(--surface-page)); color: var(--color); }
+.cpv .cpv-invisible { background: var(--surface-code); color: var(--text-muted); }
+.cpv .cpv-selected-row > * { box-shadow: inset 0 2px var(--text-primary), inset 0 -2px var(--text-primary); }
+.cpv .cpv-query-result { margin-top: 20px; border-left: 3px solid var(--cp-blue); padding: 4px 0 4px 16px; }
+.cpv .cpv-query-result > div { display: grid; grid-template-columns: 175px minmax(0, 1fr); gap: 12px; margin-top: 8px; font-size: 14px; }
+.cpv .cpv-query-result code { color: var(--text-primary); }
+.cpv .cpv-kv-cells { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin: 24px 0; }
+.cpv .cpv-kv-cells > div { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 3px solid var(--color); }
+.cpv .cpv-part-a { --color: var(--cp-blue); }
+.cpv .cpv-part-b { --color: var(--cp-violet); }
+.cpv .cpv-mass-track { height: 10px; background: var(--surface-code); margin-top: 6px; }
+.cpv .cpv-mass-track i { display: block; height: 100%; background: var(--color); }
+.cpv .cpv-kv-cells span { font-size: 14px; }
+.cpv .cpv-partials { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 24px 0; }
+.cpv .cpv-partials > div { display: flex; flex-direction: column; gap: 8px; border-left: 3px solid var(--color); padding: 0 0 0 16px; min-width: 0; }
+.cpv .cpv-partials span { font: 14px/1.6 var(--mono); overflow-wrap: anywhere; }
+.cpv .cpv-weight-bar { display: flex; height: 42px; }
+.cpv .cpv-weight-bar > span { background: color-mix(in srgb, var(--color) 16%, var(--surface-page)); border-bottom: 3px solid var(--color); display: grid; place-items: center; font: 14px var(--mono); }
+.cpv .cpv-merge-answer { display: grid; gap: 14px; margin: 20px 0; }
+.cpv .cpv-merge-answer > div { display: grid; gap: 4px; }
+.cpv .cpv-merge-answer span { font-size: 14px; color: var(--text-secondary); }
+.cpv .cpv-merge-answer strong { font: 15px/1.7 var(--mono); overflow-wrap: anywhere; }
+.cpv .cpv-merge-answer > div:first-child b { color: var(--cp-green); }
+.cpv .cpv-merge-answer > div:last-child b { text-decoration: line-through; text-decoration-color: var(--cp-magenta); }
+.cpv .cpv-timeline-section { padding: 16px 0 8px; border-bottom: 1px solid var(--hairline); }
+.cpv svg { display: block; max-width: 100%; overflow: visible; }
+.cpv svg text { font: 14px var(--sans); letter-spacing: 0; }
+.cpv .cpv-gridline { stroke: var(--hairline); stroke-width: 1; }
+.cpv .cpv-end-line { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 2 3; }
+.cpv .cpv-axis { fill: var(--text-secondary); }
+.cpv .cpv-lane-label { fill: var(--text-primary); font-weight: 600; }
+.cpv .cpv-event-0 { --color: var(--cp-blue); }
+.cpv .cpv-event-1 { --color: var(--cp-violet); }
+.cpv .cpv-event-2 { --color: var(--cp-cyan); }
+.cpv .cpv-event rect { fill: color-mix(in srgb, var(--color) 19%, var(--surface-page)); stroke: var(--color); stroke-width: 1; }
+.cpv .cpv-event text { fill: var(--text-primary); font-weight: 600; }
+.cpv .cpv-wait { fill: color-mix(in srgb, var(--cp-magenta) 8%, var(--surface-page)); stroke: var(--cp-magenta); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.cpv .cpv-chunk-work { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--hairline); }
+.cpv .cpv-chunk-work > span { font-size: 14px; }
+.cpv .cpv-chunk-work b { display: block; color: var(--cp-blue); }
+.cpv .cpv-plan-rank { margin: 22px 0; }
+.cpv .cpv-plan-rank > div:first-child { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; margin-bottom: 10px; }
+.cpv .cpv-plan-rank > div:first-child span { font-size: 14px; }
+.cpv .cpv-plan-bar { display: flex; height: 40px; background: var(--surface-code); position: relative; }
+.cpv .cpv-plan-bar > span { display: grid; place-items: center; min-width: 0; font: 14px var(--mono); }
+.cpv .cpv-work-piece { border-right: 1px solid var(--surface-page); background: color-mix(in srgb, var(--cp-blue) 19%, var(--surface-page)); border-bottom: 2px solid var(--cp-blue); }
+.cpv .cpv-network-piece { background: color-mix(in srgb, var(--cp-magenta) 20%, var(--surface-page)); border-bottom: 2px solid var(--cp-magenta); }
+.cpv .cpv-finish-line { position: absolute; border-right: 1px dashed var(--text-primary); height: 50px; top: -5px; transform: translateX(-1px); }
+.cpv table:not(.cpv-matrix):not(.cpv-head-grid) { width: 100%; border-collapse: collapse; font: 14px/1.6 var(--sans); }
+.cpv table:not(.cpv-matrix):not(.cpv-head-grid) :is(td, th) { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--hairline); font-size: 14px; text-align: left; color: var(--text-primary); }
+.cpv .cpv-table-selected { background: color-mix(in srgb, var(--cp-blue) 8%, var(--surface-page)); }
+.cpv .cpv-storage-labels { display: grid; grid-template-columns: 4fr 3fr 2fr; gap: 8px; font-size: 14px; margin: 12px 0 6px; }
+.cpv .cpv-storage-labels > span { border-bottom: 2px solid var(--hairline); padding-bottom: 4px; }
+.cpv .cpv-storage { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 6px; }
+.cpv .cpv-path-cell { display: flex; min-height: 44px; flex-direction: column; align-items: center; justify-content: center; padding: 6px 0; font: 14px/1.6 var(--mono); }
+.cpv .cpv-path-visible { border-bottom: 3px solid var(--cp-blue); background: color-mix(in srgb, var(--cp-blue) 12%, var(--surface-page)); }
+.cpv .cpv-path-excluded { background: var(--surface-code); color: var(--text-muted); }
+.cpv .cpv-path-excluded > b { text-decoration: line-through; }
+.cpv .cpv-path-row { margin-top: 28px; }
+.cpv .cpv-path-row > div { margin-top: 10px; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.cpv .cpv-candidate-stages { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin: 20px 0; }
+.cpv .cpv-candidate-stages > div { border-top: 3px solid var(--cp-blue); padding-top: 10px; }
+.cpv .cpv-candidate-stages > div:last-child { border-color: var(--cp-violet); }
+.cpv .cpv-sparse-steps { list-style: none; counter-reset: cpv-step; padding: 0; }
+.cpv .cpv-sparse-steps > li { position: relative; counter-increment: cpv-step; padding: 22px 0 22px 46px; margin: 0; border-bottom: 1px solid var(--hairline); }
+.cpv .cpv-sparse-steps > li::before { content: counter(cpv-step); position: absolute; top: 23px; left: 0; color: var(--cp-blue); font: 600 20px var(--sans); }
+.cpv .cpv-sparse-steps p { margin-top: 10px; }
+.cpv .cpv-id-sequence { display: flex; gap: 12px; margin: 14px 0; }
+.cpv .cpv-id-sequence > span { display: flex; gap: 12px; align-items: baseline; border-bottom: 2px solid var(--cp-green); padding: 6px 12px; font: 600 18px var(--mono); }
+.cpv .cpv-id-sequence small { font-weight: 400; }
+.cpv .cpv-combined-kv { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 14px; gap: 8px; }
+.cpv .cpv-combined-kv > div { display: grid; gap: 6px; border-top: 2px solid var(--cp-cyan); background: var(--surface-code); padding: 10px; }
+.cpv .cpv-sparse-steps .cpv-equations { margin-top: 14px; }
+.cpv .cpv-step-title { display: flex; align-items: baseline; gap: 14px; margin: 26px 0 16px; font-weight: 600; }
+.cpv .cpv-step-title > b { color: var(--cp-blue); font-size: 20px; }
+.cpv .cpv-affine-ranks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.cpv .cpv-affine-ranks > div { border-top: 3px solid var(--cp-blue); padding: 10px 0; display: flex; flex-direction: column; gap: 8px; }
+.cpv .cpv-affine-ranks span { font: 14px/1.6 var(--mono); }
+.cpv .cpv-corrected > div { border-top-color: var(--cp-green); }
+.cpv .cpv-scan { border-block: 1px solid var(--cp-violet); padding: 16px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.cpv .cpv-scan span { color: var(--text-secondary); font-size: 14px; }
+.cpv .cpv-scan p { color: var(--text-secondary); font-size: 14px; margin-top: 12px; }
+.cpv .cpv-scan-network > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); text-align: center; }
+.cpv .cpv-scan-network svg { width: 100%; margin: 10px 0; }
+.cpv .cpv-scan-network circle { fill: var(--cp-violet); }
+.cpv .cpv-scan-network marker path { fill: var(--cp-violet); }
+.cpv .cpv-scan-retain { fill: none; stroke: var(--hairline); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.cpv .cpv-scan-message { fill: none; stroke: var(--cp-violet); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.cpv .cpv-fanout { display: grid; grid-template-columns: 1fr 2fr; gap: 28px; margin: 30px 0; align-items: center; }
+.cpv .cpv-fanout > div:first-child { display: flex; flex-direction: column; gap: 4px; }
+.cpv .cpv-fanout > div:first-child strong { font: 600 22px var(--mono); color: var(--cp-green); }
+.cpv .cpv-children { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; border-top: 2px solid var(--cp-green); }
+.cpv .cpv-children > span { position: relative; text-align: center; font-size: 14px; padding-top: 18px; }
+.cpv .cpv-children > span::before { content: ""; height: 12px; width: 1px; background: var(--cp-green); position: absolute; left: 50%; top: 0; }
+.cpv .cpv-details { border-block: 1px solid var(--hairline); padding: 0; margin-top: 20px; }
+.cpv .cpv-details summary { cursor: pointer; color: var(--text-secondary); padding: 14px 0; font: 600 14px/1.6 var(--sans); }
+.cpv .cpv-details p { font-size: 14px; margin: 12px 0; }
+.cpv .cpv-table-scroll { overflow-x: auto; padding-bottom: 10px; }
+.cpv .cpv-table-scroll table { min-width: 440px; }
+.cpv .cpv-mamba-panels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin: 24px 0; }
+.cpv .cpv-mamba-panels p { font-size: 14px; margin: 10px 0 16px; min-height: 3.2em; }
+.cpv .cpv-head-grid { width: 100%; border-collapse: separate; border-spacing: 3px; table-layout: fixed; font: 14px/1.6 var(--mono); }
+.cpv .cpv-head-grid :is(th, td) { border: 0; padding: 4px 0; text-align: center; font-size: 14px; color: var(--text-primary); }
+.cpv .cpv-head-grid td { background: color-mix(in srgb, var(--color) 18%, var(--surface-page)); border-bottom: 2px solid var(--color); }
+.cpv .cpv-native-kernel { margin-top: 14px; padding: 12px 8px; border-block: 2px solid var(--cp-green); text-align: center; font-size: 14px; }
+.cpv .cpv-z-lane { border-left: 3px solid var(--cp-magenta); display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; padding: 10px 0 10px 16px; font-size: 14px; }
+.cpv .cpv-scaling-controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.cpv .cpv-scaling-plot { margin-top: 20px; }
+.cpv .cpv-series { fill: none; stroke: var(--color); stroke-width: 2.5; }
+.cpv .cpv-point { fill: var(--surface-page); stroke: var(--color); stroke-width: 2.5; }
+.cpv .cpv-ideal { fill: none; stroke: var(--text-muted); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.cpv .cpv-ideal-key { display: flex; gap: 10px; align-items: center; }
+.cpv .cpv-ideal-key i { width: 24px; border-top: 2px dashed var(--text-muted); flex: 0 0 24px; }
+@container (max-width: 720px) {
+  .cpv .cpv-ownership-grid { grid-template-columns: 1fr; gap: 16px; }
+  .cpv .cpv-ownership-grid > div:first-child { max-width: 430px; margin: 0 auto; width: 100%; }
+  .cpv .cpv-matrix { max-width: 450px; margin: 0 auto; }
+  .cpv .cpv-mamba-panels { grid-template-columns: 1fr; gap: 28px; }
+  .cpv .cpv-mamba-panels > div { max-width: 460px; width: 100%; margin: 0 auto; }
+  .cpv .cpv-mamba-panels p { min-height: 0; }
+  .cpv .cpv-z-lane { grid-template-columns: 1fr; gap: 12px; }
+  .cpv .cpv-chunk-work { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container (max-width: 520px) {
+  .cpv .cpv-capacity-row { grid-template-columns: 1fr; gap: 10px; }
+  .cpv .cpv-capacity-row > div:first-child { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; }
+  .cpv .cpv-capacity-stats, .cpv .cpv-schedule-summary { grid-template-columns: 1fr; gap: 12px; }
+  .cpv :is(.cpv-capacity-stats, .cpv-schedule-summary) > span { display: flex; align-items: baseline; gap: 12px; }
+  .cpv :is(.cpv-capacity-stats, .cpv-schedule-summary) b { font-size: 24px; }
+  .cpv .cpv-partials { grid-template-columns: 1fr; }
+  .cpv .cpv-kv-cells { grid-template-columns: 1fr 1fr; gap: 20px; }
+  .cpv .cpv-query-result > div { grid-template-columns: 1fr; gap: 4px; }
+  .cpv .cpv-scan { grid-template-columns: 1fr; gap: 12px; }
+  .cpv .cpv-fanout { grid-template-columns: 1fr; gap: 16px; }
+  .cpv .cpv-storage { gap: 3px; }
+  .cpv .cpv-storage-labels { gap: 3px; }
+  .cpv .cpv-path-row > div { gap: 3px; }
+  .cpv .cpv-path-cell small { font: 14px/1.6 var(--sans); }
+  .cpv .cpv-candidate-stages { gap: 20px; }
+  .cpv .cpv-sparse-steps > li { padding-left: 28px; }
+  .cpv .cpv-id-sequence { gap: 10px; }
+  .cpv .cpv-id-sequence > span { flex-direction: column; gap: 0; padding: 4px 10px; }
+  .cpv .cpv-combined-kv { grid-template-columns: 1fr 1fr; }
+  .cpv .cpv-affine-ranks { grid-template-columns: 1fr 1fr; gap: 12px 24px; }
+}
+@media (prefers-reduced-motion: reduce) { .cpv * { scroll-behavior: auto; } }
+@media print { .cpv .cpv-choices, .cpv .cpv-control { display: none; } .cpv .cpv-details { break-inside: avoid; } }
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#article">Skip to article</a>
+<header class="site-header"><a href="../../" class="brand">FurtherAI</a><nav aria-label="Site"><a href="../prefix-tree-packing/">Prefix-tree packing</a><a href="https://github.com/OpenPipe/ART">ART</a><button type="button" data-theme-toggle title="Switch color theme">Dark</button></nav></header>
+<div class="page-layout">
+<aside class="contents"><details class="contents-menu" open><summary>In this article</summary><nav aria-label="Contents">
+<p>In this article</p>
+<a href="#why">1. A longer useful row</a>
+<a href="#one-query">2. One attention query</a>
+<a href="#distributed">3. Move KV, keep Q</a>
+<a href="#backward">4. Return the gradients</a>
+<a href="#planner">5. Plan the critical path</a>
+<a href="#semantics">6. Trees, windows, sinks</a>
+<a href="#glm">7. Learned sparse attention</a>
+<a href="#gdn">8. Gated DeltaNet</a>
+<a href="#mamba">9. Mamba-2</a>
+<a href="#memory">10. What happens to memory</a>
+<a href="#results">11. What we measured</a>
+<a href="#methods">12. What the evidence proves</a>
+</nav></details></aside>
+<main id="article"><article>
+<header class="post-header">
+<p class="eyebrow">Systems / ART / Distributed training</p>
+<h1>Context Parallelism in ART</h1>
+<p class="subtitle">From one attention query to a distributed tree.</p>
+<p class="meta">September 2026 &middot; About an hour, plus optional derivations</p>
+<p class="lead">A GPU does not need every token to compute its part of a sequence. It needs the right information about the other tokens. Finding that information, moving it at the right time, and leaving the expensive arithmetic in efficient kernels is the central problem of context parallelism.</p>
+</header>
+<p>I started this project with three hypotheses: context parallelism could move less data than tensor parallelism, hide that communication behind the computation it serves, and lower activation memory per GPU. The especially interesting opportunity was reinforcement learning. A training batch often contains several trajectories with the same long prompt. <a href="../prefix-tree-packing/">Prefix-tree packing</a> lets us compute that prompt once. A larger packed row can then hold more new trajectories, rather than more copies of old context.</p>
+<p>The practical results were stronger than a way to make longer sequences fit. On the workloads we measured, context parallelism became a useful throughput axis. Dense attention stayed nearly constant in time as we increased both GPUs and packed tokens. A GLM-5.2 training experiment retained about 95% weak-scaling efficiency when growing from eight to sixteen H200s across two nodes. But these results do not come from one universal distributed kernel. Attention, learned sparse attention, Gated DeltaNet, and Mamba-2 offer different ways to separate their work.</p>
+<p>This article develops those ways from the beginning. We will follow a query, its normalization, and its gradients before introducing a planner. Then we will change the layer and ask what information has to cross a GPU boundary now. The expandable sections carry the detailed derivations; the main text explains why the derivations matter for execution.</p>
+
+<section id="why">
+<p class="section-number">01 / The workload</p>
+<h2>What does a longer packed row buy us?</h2>
+<p class="section-answer">It buys room for more unique work. With a shared prompt, that can mean substantially more completed trajectories per pass through the model.</p>
+<p>A <strong>trajectory</strong> here is one prompt followed by one sampled completion. Several trajectories can share a prompt, or share a longer conversation before branching. The model must produce the same outputs as if each trajectory had run separately. It must not let a completion read another completion. But computation on an identical, non-trainable prefix can be shared.</p>
+<p>It helps to distinguish two lengths. <strong>Logical length</strong> is the context seen by a trajectory along its root-to-leaf path. <strong>Physical length</strong> is the number of stored token positions in the packed row. A tree with a 24K prompt and five 8K completions has 64K physical tokens, while every trajectory has a 32K logical context. Throughout the capacity examples, K means 1,024. A longer physical row is not necessarily a longer context for any individual query.</p>
+<pre class="equation">one prompt of length P, completions of lengths C_1 ... C_m
+
+flattened storage = m * P + sum(C_i)
+tree storage      =     P + sum(C_i)</pre>
+<p>The saving is not limited to storage. Tokenwise projections and MLPs process the prompt once. Dense causal attention computes its prompt-to-prompt triangle once. The completion-to-prompt rectangles still exist: every completion needs to read the prompt. Sharing removes duplicated computation, not legitimate dependencies.</p>
+<figure class="cp-figure"><div data-figure="capacity"></div><figcaption><strong>Capacity arithmetic, not a measured speedup.</strong> At 64K physical tokens per rank, CP1 fits five leaves of this tree; CP4 fits 29. Flattening fits two and eight trajectories respectively. The comparison holds prompt and completion lengths fixed while growing the row.</figcaption></figure>
+<p><strong>Context parallelism (CP)</strong> partitions tokens among a group of GPUs. A <strong>rank</strong> is one participating process, normally one GPU. CP4 means four ranks collaborate on this packed row. The model parameters need not be partitioned by CP itself: each rank can apply the same linear layer to a different set of tokens. Other parallelisms can partition parameters at the same time.</p>
+<p>This differs from <strong>tensor parallelism (TP)</strong>, which splits a layer's channels or matrix dimensions and combines partial results. <strong>Pipeline parallelism (PP)</strong> splits layers across stages. <strong>Expert parallelism (EP)</strong> splits the experts of a mixture-of-experts model and routes token activations to them. These are composable axes, not four competing names for the same operation. In many of our large-model runs, CP handles sequence-dependent work and EP provides the necessary expert-weight sharding.</p>
+<h3>The scaling question must match the workload</h3>
+<p>In <strong>strong scaling</strong>, we keep a problem fixed and ask more GPUs to finish it faster. In <strong>weak scaling</strong>, we give N times as much work to N times as many GPUs and ask them to finish in the same time, with similar memory per GPU. The second question is especially natural for training a larger collection of trajectories.</p>
+<p>There is a crucial qualification for attention. Making one causal sequence N times longer creates roughly N squared times as many query-key pairs. That is not constant work per GPU. Our ordinary weak-scaling workloads instead add independently sized families of prompts and completions until the larger packed row fills. Family shapes have the same distribution, so token count and visible attention-pair count grow roughly together. A fixed global long-chain experiment is a different, explicitly labeled strong-scaling test.</p>
+<p>Prefix reuse and CP therefore help in two distinct ways. Reuse reduces the work represented by a collection of trajectories. CP distributes the remaining work and grows the capacity of the row. The capacity figure explains the first opportunity; the runtime measurements later test the second. We should not infer the runtime of 29 trajectories merely from the fact that they fit.</p>
+<details><summary>Derivation: capacity and attention work for one family</summary><div class="proof">
+<p>For equal completion length C and row capacity S, flattened trajectories occupy P+C tokens each. A tree pays P once. Ignoring all packing constraints except capacity:</p>
+<pre class="equation">m_flat = floor(S / (P + C))
+m_tree = floor((S - P) / C), for S &gt;= P
+
+visible pairs in the tree:
+A_tree = P(P+1)/2 + sum_i [C_i P + C_i(C_i+1)/2]
+
+A_flat - A_tree = (m-1) P(P+1)/2</pre>
+<p>The rectangle C_i P remains in both executions. So does each completion's own triangle. With a deeper tree, add one causal triangle for each physical segment and one rectangle between that segment and each of its ancestors. Unrelated branches contribute no pair. This is the work-counting rule the planner must respect.</p>
+<p>Tree sharing also requires matching all semantics along a shared path: token identities, position IDs, masks, and the treatment of stochastic operations. ART keeps trainable tokens in leaves so independent loss contributions are not silently collapsed into one shared target. Gradients from multiple descendants still add at their common prefix. The prefix-tree article covers the packing contract; CP must preserve it.</p>
+</div></details>
+</section>
+
+<section id="one-query">
+<p class="section-number">02 / Start on one GPU</p>
+<h2>What information defines one attention output?</h2>
+<p class="section-answer">A weighted sum of values and its normalization. This small interface is what lets us split attention without approximating it.</p>
+<p>For one attention head, a linear projection produces a <strong>query</strong> q for the token whose output we want, a <strong>key</strong> k_j for every token it may read, and a <strong>value</strong> v_j to read from that token. A dot product measures query-key compatibility. Softmax turns the scores into positive weights summing to one. A mask excludes keys that this query must not see.</p>
+<pre class="equation">s_j = dot(q, k_j) / sqrt(d) + any allowed score bias
+p_j = exp(s_j) / sum_visible_keys exp(s_k)
+o   = sum_visible_keys p_j * v_j</pre>
+<p>Here d is the query/key head dimension; o has the value dimension. We will omit the head index when the same reasoning applies independently to each head. In <strong>grouped-query attention</strong>, several query heads share one KV head. This reduces the amount of KV data stored and moved, even though each query head still computes its own scores.</p>
+<p>For a causal sequence, query i can read positions up through i. For a tree, it can read earlier tokens in its own segment and all tokens in its ancestors. Notice what is absent from the formula: no term requires visible keys to be adjacent in memory, on the same GPU, or processed in a particular tile order. Those are implementation choices. Only membership in the visible set and correct normalization matter.</p>
+<h3>Efficient attention already avoids the giant matrix</h3>
+<p>The naive implementation forms a score matrix with one row per query and one column per key. At long context this intermediate is enormous. FlashAttention instead visits tiles of keys, keeps small running statistics, and never writes the complete probability matrix to GPU memory. Its major contribution is reducing traffic to high-bandwidth memory (HBM), the GPU's large off-chip memory, while retaining exact attention in real arithmetic. <a href="https://arxiv.org/abs/2205.14135">FlashAttention paper</a>.</p>
+<p>ART wants to retain that efficient inner computation. The local attention kernel should still perform its dot products, softmax, and value accumulation using its tuned GPU schedule. Distributed execution should provide the kernel with an appropriate query block, a KV block, and a mask, then combine its answers. Replacing a mature attention kernel with a Python-level distributed formula would lose the benefit we are trying to preserve.</p>
+<p>The extra result we need from each kernel call is <strong>log-sum-exp</strong>, abbreviated LSE. For this query and this subset of keys, LSE is the logarithm of the softmax denominator. Keeping it in log space avoids overflowing exp(s) when scores are large.</p>
+<pre class="equation">L_A = log(sum_{j in A} exp(s_j))
+o_A = sum_{j in A} exp(s_j - L_A) * v_j</pre>
+<p>The pair (o_A, L_A) summarizes everything subset A contributes to this query's output. It is not a reusable compression of those keys for every possible query: change q and both quantities change. It is a sufficient summary for merging <em>this</em> query's already-computed attention. That distinction will matter when we compare attention with recurrent state later.</p>
+<p>In ART's dense path, PyTorch FlexAttention supplies the local operator and mask interface, with the qualified Flash backend for the H200 measurements in this article. ART supplies the work decomposition, movement of ranges, and merge around it. A kernel launch is not synonymous with a complete layer: one distributed layer can invoke several local attention stages, as well as small layout and merge kernels.</p>
+</section>
+
+<section id="distributed">
+<p class="section-number">03 / Partition the same computation</p>
+<h2>Keep the query; bring it the keys it needs</h2>
+<p class="section-answer">A query's owner computes its complete output, using local KV immediately and remote KV in scheduled stages.</p>
+<p>Let us use a tiny tree for the rest of the attention discussion. Its root has four tokens, physical positions 0 through 3. Completion A occupies 4 through 6. Completion B occupies 7 and 8. These are addresses in the packed row, not one causal sequence of length nine. Query 6 can see 0 through 6. Query 8 can see 0 through 3, then 7 and 8; it cannot see A.</p>
+<p>For an illustrative two-rank assignment, rank 0 owns tokens {0,1,4,5,6}; rank 1 owns {2,3,7,8}. This assignment is not claimed to be optimal. It makes an important point visible: each rank's tokens can consist of several disjoint ranges. The owner stores the residual activations for those tokens and performs their token-local work. Initially it also holds their projected Q, K, and V.</p>
+<figure class="cp-figure"><div data-figure="ownership"></div><figcaption><strong>One tree, two owners.</strong> Follow a query to distinguish physical address, causal visibility, and storage owner. For query 6, keys 2 and 3 are remote, while B's tokens remain invisible even though they are on the same remote rank.</figcaption></figure>
+<p>Rank 0 can start query 6's attention against its local visible keys {0,1,4,5,6}. In parallel it requests the needed remote KV range {2,3}. Once that range is ready, another kernel computes query 6 against those keys. A <strong>stage</strong> is one such local attention computation over a planned query/KV subset. A <strong>wave</strong> groups remote ranges into a scheduled exchange and the computation that consumes them.</p>
+<p>We do not need to broadcast Q to every KV owner in this design. Q remains at its owner, and the final O stays there too. That keeps the output projection, residual addition, normalization, and subsequent tokenwise work local to the same owner. Remote KVs are temporary inputs, not a change of ownership. Multiple local queries can reuse a fetched KV range; it should not be sent again for every query.</p>
+<h3>Two softmax outputs cannot simply be averaged</h3>
+<p>Each stage normalizes over a different set of keys. If the local stage accounts for 30% of the total exponential score mass and the remote stage accounts for 70%, their outputs must receive those weights. Counting keys does not give the weights; two very high-scoring keys may dominate two hundred low-scoring keys.</p>
+<pre class="equation">L = logaddexp(L_A, L_B)
+o = exp(L_A - L) * o_A + exp(L_B - L) * o_B</pre>
+<p>The expression logaddexp(a,b) means log(exp(a)+exp(b)), evaluated stably. The two multipliers sum to one. The result is precisely the output that a single attention call over A union B would produce, up to floating-point evaluation order. It is also composable: merge two stages, then merge the result with a third.</p>
+<figure class="cp-figure"><div data-figure="attention-merge"></div><figcaption><strong>An exact scalar example.</strong> The four unnormalized weights are 1, 2, 3, and 4; the values are 1, 3, 2, and 8. The two partitions have masses 3 and 7. Correctly merging their normalized outputs gives 4.5; averaging them equally does not.</figcaption></figure>
+<p>This is why CP can build on a fast attention kernel. Its inner dot products and softmax do not become distributed operations. The distributed layer asks for the local O and LSE, then uses a comparatively small merge over query rows. ART fuses these gathers and merges where possible, rather than leaving chains of indexing, casts, and temporary tensors between large kernels.</p>
+<h3>Communication has a deadline, not just a byte count</h3>
+<p>A CUDA stream is an ordered queue of GPU operations. Work on different streams can overlap when the hardware and data dependencies permit it. ART uses that separation to begin a remote KV fetch while the compute stream runs local attention. It then waits for the fetch only where a remote stage actually needs the data. Later fetches can be issued while earlier remote stages compute.</p>
+<p>Suppose local compute lasts 5 ms and a KV fetch lasts 3 ms. The fetch consumes network resources, but it need not add 3 ms to the layer's wall time. If the same fetch takes 7 ms, the compute stream waits about 2 ms after local compute. We call that delay <strong>exposed communication</strong>. More generally it is communication on the layer's critical path, the chain of dependencies that determines when the layer can finish.</p>
+<p>The schedule cannot hide everything just by assigning more streams. Packing a send buffer must finish before its transfer reads it; attention must wait for its receive buffer; the buffer must remain alive while either stream uses it. GPU memory bandwidth and compute resources may also be shared between communication, packing, and attention. These constraints are part of the execution we measure, not overhead assumed away by an asynchronous API.</p>
+<details><summary>Derivation: stable attention merging, empty stages, and associativity</summary><div class="proof">
+<p>For disjoint visible key sets A and B, define unnormalized vectors N_A = sum exp(s_j)v_j and scalar masses Z_A = sum exp(s_j), with corresponding quantities for B. Then o_A=N_A/Z_A. Direct substitution gives:</p>
+<pre class="equation">o = (N_A + N_B) / (Z_A + Z_B)
+  = [Z_A / (Z_A + Z_B)] o_A
+    + [Z_B / (Z_A + Z_B)] o_B.</pre>
+<p>L_A=log Z_A and L_B=log Z_B recover the weights without representing large Z values. Let m=max(L_A,L_B). Compute:</p>
+<pre class="equation">a = exp(L_A - m)
+b = exp(L_B - m)
+L = m + log(a + b)
+o = (a * o_A + b * o_B) / (a + b)</pre>
+<p>Associativity follows because the underlying representation is addition of (N,Z). It is exact in real arithmetic, not a promise of bitwise identity across different FP32 or BF16 reduction orders. Accumulating merge statistics at higher precision reduces the error introduced outside the local kernel.</p>
+<p>A stage with no visible key has Z=0. Its neutral representation is output zero and LSE negative infinity, with explicit handling of the all-empty case to avoid negative-infinity minus negative-infinity. Every real query must retain the visibility required by the model. An all-masked padding query must not accidentally acquire a nonzero output or gradient.</p>
+<p>Disjointness is substantive. If a fetched key appears twice in the sets being merged, it contributes twice to both numerator and denominator and changes the answer. Range deduplication and stage masks are therefore correctness mechanisms, not only memory optimizations. The same rules hold per query and per head when different rows see different stage subsets.</p>
+</div></details>
+</section>
+
+<section id="backward">
+<p class="section-number">04 / Close the ownership loop</p>
+<h2>Where do the gradients go?</h2>
+<p class="section-answer">dQ stays with the query owner. Contributions to remote dK and dV must return to the token owner and be added there.</p>
+<p>In a normal attention backward pass, each query contributes to its own q gradient and to the k and v gradients of all keys it read. A shared root may be read by hundreds of completion queries. Those contributions add. CP changes where they are produced, not how many there are or how they should be summed.</p>
+<p>Return to query 6 on rank 0. Its local stage produces gradient contributions for local keys {0,1,4,5,6}. Its remote stage produces contributions for keys {2,3}. Those two remote tokens are owned by rank 1, which may also produce dKV for them from its own queries. Rank 0 must send its contributions back, and rank 1 must add them to the others before running the relevant projection backward.</p>
+<p>The transpose of a gather that replicates values is an accumulation, not a plain copy. If three ranks fetch one root KV, backward has three contributions to that KV. If a rank has no useful tokens in a particular stage, it still has to obey the collective schedule when other ranks need its participation. A zero-sized tensor does not grant permission to skip an ordered collective.</p>
+<p>There is a second gradient sum outside the attention operator. If CP ranks use replicated projection or MLP weights on different tokens, each rank computes only its token subset's contribution to those parameter gradients. The training system must reduce them with the model's intended loss normalization. Returning dKV to its token owner does not replace parameter-gradient reduction. EP and TP change which parameters are shared and which groups perform those sums; a correct topology must account for both kinds of ownership.</p>
+<h3>Use the global softmax derivative</h3>
+<p>Backward must also respect the normalization we just merged. For a query with incoming output gradient g, define D=dot(g,o), where o is the <em>complete</em> attention output. The derivative of a score is p_j times (dot(g,v_j)-D). The D term couples all visible keys, including keys handled by other stages.</p>
+<p>There are two equivalent interfaces for an efficient staged backward. A kernel can use the saved global O and LSE directly. Or the merge backward can produce the appropriate adjoints for each local O and LSE. What is not correct is to run every stage's ordinary softmax backward with the original g and pretend the local denominators were global. ART's stage and merge machinery supplies this missing information around the local backward kernels.</p>
+<p>After a remote stage's backward produces dKV, its return can overlap backward compute for another stage. Near the end, however, all outstanding contributions must be complete before the owner consumes its final gradients. This gives backward both a useful overlap opportunity and a possible communication tail.</p>
+<figure class="cp-figure"><div data-figure="schedule"></div><figcaption><strong>Illustrative dependency schedule, not a captured trace.</strong> Compute, transfers, and layout work occupy separate lanes. A transfer may run for several milliseconds without extending the step; only a dependency wait or unfinished final return is exposed. Backward dKV cannot start traveling before the corresponding backward computation produces it.</figcaption></figure>
+<p>This explains why a profiler's summed kernel times are not the layer time. Concurrent communication and compute overlap. CPU launch ranges can contain queueing or compilation rather than GPU execution. To reconcile a profile, we need a wall-clock span, stream dependencies, and the union of intervals on the critical path. Adding all visible bars can count the same millisecond twice.</p>
+<details><summary>Derivation: the gradient of the merge and the attention stages</summary><div class="proof">
+<p>Let the full output be o=sum_r w_r o_r, where w_r=exp(L_r-L) and L=logsumexp_r L_r. With scalar loss J and g=dJ/do, differentiation gives:</p>
+<pre class="equation">dJ / do_r = w_r * g
+dJ / dL_r = w_r * dot(g, o_r - o)</pre>
+<p>Within stage r, p_local_j=exp(s_j-L_r) and dp_local follows the ordinary softmax derivative. The local-output adjoint contributes w_r p_local_j dot(g,v_j-o_r) to dJ/ds_j. LSE has derivative dL_r/ds_j=p_local_j, so its adjoint contributes w_r p_local_j dot(g,o_r-o). Adding cancels o_r:</p>
+<pre class="equation">dJ/ds_j = p_global_j * dot(g, v_j - o)
+p_global_j = w_r * p_local_j
+
+dV_j += p_global_j * g
+dQ   += (dJ/ds_j) * K_j / sqrt(d)
+dK_j += (dJ/ds_j) * Q   / sqrt(d)</pre>
+<p>These equations are for one query and head. Sum across queries and across query heads that share a KV head. Score biases or learned sinks have their own derivatives. A distributed implementation must accumulate all consumers' contributions once, at the canonical parameter/token ownership used by the rest of the model.</p>
+<p>If backward recomputes probabilities instead of storing them, it uses the same scores and the saved global normalization. This trades repeated arithmetic for much less activation memory. CP does not require retaining a global attention probability matrix; nor should a convenience wrapper accidentally materialize one.</p>
+<p>The useful invariant for a communication audit is simple: every forward copy from owner a to consumer b has one backward contribution from b to a. Many forward copies imply a sum. A permutation has an inverse permutation; a replicated gather has a scatter-add. Check these distinctions before attributing a large gradient discrepancy to floating-point noise.</p>
+</div></details>
+</section>
+<section id="planner">
+<p class="section-number">05 / Turn algebra into a schedule</p>
+<h2>Equal tokens are not equal work</h2>
+<p class="section-answer">The planner chooses ownership and communication waves to reduce the slowest rank's predicted completion time, not simply to make token counts match.</p>
+<p>On an ordinary causal sequence, early queries read few keys and late queries read many. Split the sequence into equal contiguous intervals and the last rank gets much more attention work. A ring can circulate KV shards correctly, yet still leave early-query ranks underused. The communication algorithm and the load-balancing problem are different problems.</p>
+<p>In <strong>ring attention</strong>, each rank starts with its local Q/K/V, computes against a KV shard, then passes that shard to the next rank while receiving another. Repeating the rotation visits the required remote KVs. The output/LSE merge keeps a running answer without retaining every shard at once. It is a useful distributed analogue of tiled attention. The limitation relevant here is not the merge math; it is committing to a regular circulation and ownership pattern when the useful work is irregular.</p>
+<p>A familiar improvement is a <strong>zigzag</strong> or folded assignment. Give each rank one early piece and one late piece. Their causal workloads partly compensate: a cheap early piece accompanies an expensive late piece. For one regular causal triangle, this is a good geometrical shortcut. It can still reuse the same local attention kernel and the same merge algebra.</p>
+<p>For eight causal tokens, query workloads are 1,2,3,4,5,6,7,8 visible keys. A contiguous two-rank split gives 10 versus 26 pairs. Split into four two-token blocks instead: their work is 3,7,11,15. Assigning the first and last to one rank and the middle two to the other gives 18 pairs each. That is the intuition behind the fold; it is not a change to which keys a query may read.</p>
+<p>Now replace the triangle with our tree. Late physical positions are not necessarily expensive. They may belong to short independent branches. A shared root is read by many branches, so placing it affects KV traffic as well as its own query work. With sliding windows, a late query may read only a short path suffix. No fixed fold of the packed row captures all these cases.</p>
+<h3>The idea we took from MagiAttention</h3>
+<p><a href="https://github.com/SandAI-org/MagiAttention">MagiAttention</a> was the central inspiration: decompose attention into distributable work and let a planner decide its placement. The essential step is to stop treating a rank's contiguous sequence interval as a law of attention. A plan may assign different collections of query work to different ranks, then schedule the required data movement.</p>
+<p>ART did not import MagiAttention's entire runtime or its attention kernel. Nor did we impose a restriction that all supported masks must be only full rectangles or causal triangles. Those shapes often occur in trees and are useful for explaining them, but the executor's masking interface preserves more general visibility. The inheritance is the decomposition-and-planning approach; the local dense arithmetic remains in the FlexAttention stack.</p>
+<h3>Three objects the planner must keep separate</h3>
+<p>First is <strong>visibility</strong>: which query-key pairs are valid. Second is <strong>ownership</strong>: where the token activations live. Third is the <strong>execution schedule</strong>: which query/KV subsets run in which stages and when their data arrives. Visibility is fixed by model and tree semantics. Ownership and scheduling may change to improve performance without changing visibility.</p>
+<p>Searching all assignments of individual tokens is hopeless. ART groups nearby physical tokens into contiguous <strong>chunks</strong> for planning. A rank may own any collection of these chunks; its whole assignment need not be contiguous. Contiguity limits the search space and makes movement representable as a compact set of ranges. It is not a mathematical constraint that neighboring tokens must execute together.</p>
+<p>The planner counts visible pairs between query chunk i and key chunk j. A matrix W[i,j] records these counts. Summing a query chunk's row estimates its arithmetic. The nonzero columns identify the KV it needs. After assigning owners, those same columns determine local work, remote dependencies, and opportunities to share one fetch across several queries.</p>
+<p>Token-local work must not disappear from the objective either. A root's early queries may be cheap in attention but still run projections and an MLP. Giving one rank most tokens to equalize only attention pairs can make that rank the bottleneck in the surrounding model. Geometry, model-derived work profiles, and memory constraints complement the attention-time prediction.</p>
+<p>Consider a root chunk used by ten query chunks on one rank. Its arithmetic contributes to ten query-key interactions, but its KV need only be fetched once for a stage containing those queries. A model that charges one transfer per interaction overestimates traffic. A model that balances only pair counts misses this reuse and may create an unnecessarily fragmented plan.</p>
+<figure class="cp-figure"><div data-figure="planner"></div><figcaption><strong>A scheduling example with explicit illustrative costs.</strong> Balancing tokens, balancing attention arithmetic, and balancing wall time can choose different owners. The objective is the last rank to finish after its dependencies, not the sum of busy time over all ranks.</figcaption></figure>
+<h3>Predict milliseconds on the actual execution shape</h3>
+<p>Visible pair count is a useful starting point, not a complete runtime model. Tiny attention calls underfill the GPU. More ranges require gathering and assembly. Each stage adds launch and merge work. A remote transfer costs latency as well as bytes divided by bandwidth. Forward and backward have different throughput and different overlap opportunities.</p>
+<p>The generic dense planner uses calibrated coefficients for these effects and simulates the stage schedule. Local and remote attention have distinct forward/backward pair-time coefficients. A measured underfill term accounts for small remote stages. Range counts approximate layout overhead. Communication coefficients must reflect the hardware; explicit rank-to-node link profiles in later planner work further distinguish cross-node traffic from local traffic. The measured snapshot is not a claim that one bandwidth coefficient predicts every placement.</p>
+<pre class="equation">stage time ~= launch cost
+            + visible pairs / achieved pair throughput
+            + merge work + range handling + underfill
+
+transfer time ~= latency + bytes / achieved bandwidth
+
+start next compute = max(compute available, required KV ready)
+finish backward    = max(compute finished, all dKV returned)</pre>
+<p>These are empirical predictions, not proofs or peak-FLOP estimates. A coefficient should explain observed runtime across execution shapes; it should not be chosen merely to make a named benchmark select a desired plan. The simulator is also an approximation: contention and CPU scheduling can make actual overlap worse. Comparing predicted and measured times on alternative plans is the test of whether its decisions deserve trust.</p>
+<p>The bounded search starts from reasonable chunk assignments, tries a limited set of wave counts, and evaluates candidate ownership moves around costly ranks. It stops when it cannot find a worthwhile improvement or reaches its search budget. This avoids exponential enumeration. More waves can improve overlap and limit temporary memory, but they also create more small calls. Fewer waves reduce launches, but can delay useful compute or enlarge working buffers.</p>
+<p>Architecture-specific planners need architecture-specific work. GLM's profile includes indexer tile pairs, sparse-attention and projection work, bytes, memory, peers, and fragmentation; its resource-based comparisons are not identical to the generic dense scalar-time model. GDN has a separate runtime model for local versus chained recurrence. Calling all of these simply “balanced tokens” would hide the most important decision they make.</p>
+<h3>The plan is per input, not per layer</h3>
+<p>A changing packed tree requires a new visibility layout and potentially a new ownership plan. But dozens of compatible model layers can use that plan. CPU lookahead prepares future inputs while the GPU executes the current one. GPU block metadata is materialized for a prepared plan and reused where the attention geometry matches. Tensor values, such as actual Q and K, are still computed afresh in every layer.</p>
+<p><strong>Block metadata</strong> tells the local attention kernel which query/key tiles contain valid work, which are entirely visible, and which require an elementwise mask check. It is not a stored dense probability matrix. Compact construction is important at long context: materializing a temporary token-by-token Boolean mask can consume more memory than the attention operation itself. ART's preparation constructs the kernel's required representation without changing the visibility the kernel receives.</p>
+<p>That separation is why a 40 ms planning time need not add 40 ms to every layer. It is also why we must report it. If lookahead cannot keep up, the model waits. If a new input repeatedly triggers compilation, the nominally fast layer is not fast in training. Caching an exactly repeated tree is useful in a fixed-input benchmark, but cannot establish performance on varying completions.</p>
+<details><summary>Implementation: a small critical-path simulator</summary><div class="proof">
+<p>This pseudocode illustrates the dense planner's timing logic, not its full search or data structures. Fetch j+1 is started when stage j can run; we do not assume infinite simultaneous fetches. All times are elapsed milliseconds in the model.</p>
+<pre><code>compute_done = local_attention_ms
+fetch_ready = first_fetch_ms
+
+for stage in remote_stages:
+    start = max(compute_done, fetch_ready)
+    fetch_ready = start + stage.next_fetch_ms
+    compute_done = start + stage.attention_and_merge_ms
+
+forward_done = compute_done
+
+compute_done = 0
+returns_done = []
+for stage in backward_stages:
+    compute_done += stage.backward_ms
+    returns_done.append(compute_done + stage.return_dkv_ms)
+compute_done += local_backward_ms
+backward_done = max(compute_done, *returns_done)</code></pre>
+<p>A more detailed model can represent serialization between transfers, gather streams, and hardware resource contention. The important invariant is that communication begins only when its input exists, and compute begins only when its dependencies are ready. The global objective uses the slowest participating rank, not the average rank.</p>
+<p>Counting bytes also needs actual tensor geometry. In BF16 GQA, one KV token with H_kv heads, key dimension d_k and value dimension d_v occupies 2 H_kv(d_k+d_v) bytes. The Qwen attention shape used below has four KV heads and d_k=d_v=128, or 2,048 bytes per KV token. One 4,096-token fetch is 8 MiB before any additional buffers or replication. dKV transport may use a different accumulation dtype; its byte count must use that dtype rather than blindly copying the forward estimate.</p>
+</div></details>
+<p class="source">Implementation anchor: ART <a href="https://github.com/OpenPipe/ART/blob/e932bff638d9efe46db73ace334656181c302544/src/art/megatron/context_parallel/runtime.py">context-parallel planner and runtime</a>. Coefficients and search budgets describe this revision, not a claim of universal optimality.</p>
+</section>
+
+<section id="semantics">
+<p class="section-number">06 / Change visibility, preserve the algebra</p>
+<h2>Trees, sliding windows, and attention sinks</h2>
+<p class="section-answer">The same staged attention algebra supports these cases, but storage addresses must not masquerade as positions or probabilities.</p>
+<p>A tree mask is not an ordinary causal mask applied to the packed row. Physical position 8 follows completion A in storage, but A is not an ancestor of B. Position IDs also follow the root-to-leaf path. In our example, B's tokens at physical positions 7 and 8 have logical positions 4 and 5. That distinction affects rotary position embeddings as well as visibility.</p>
+<p>For <strong>sliding-window attention (SWA)</strong>, a query sees only a recent part of its logical history. If the window contains three tokens including the current token, query B8 at logical position 5 can see logical positions 3,4,5: physical tokens 3,7,8. Taking the last three physical addresses instead would return 6,7,8, leaking a sibling and dropping the correct root token.</p>
+<figure class="cp-figure"><div data-figure="visibility"></div><figcaption><strong>Window distance is measured along the branch.</strong> Ordinary tree-causal attention and a three-token logical window differ in which ancestors remain visible. Neither permits a sibling, regardless of where it is stored.</figcaption></figure>
+<p>The planner can intersect tree ancestry with the layer's window rule when counting work and requesting ranges. The local kernel receives the resulting mask. Smaller windows reduce arithmetic and often KV traffic, but they also reduce how much compute is available to hide communication. A model alternating global and windowed layers may therefore have very different bottlenecks in those two layer classes.</p>
+<h3>A learned sink is probability mass, not another token</h3>
+<p>Some models, including GPT-OSS, add a learned attention-sink logit per head. In this use of the term, the sink contributes to the softmax denominator but has zero value. It allows the head to assign some probability to “read nothing.” This is distinct from keeping the first few real tokens globally visible, another technique sometimes called attention sinks.</p>
+<p>Suppose ordinary attention over visible tokens has output o and LSE L, and the sink logit is a. Including the sink rescales the token output by exp(L)/(exp(L)+exp(a)). The sink belongs to the <em>whole query</em>, not to every remote stage. Applying one copy in each of four stage denominators would silently multiply its mass by four and make the model depend on CP size.</p>
+<p>ART can apply the sink once when composing the complete output, while retaining the ordinary local kernel and its LSE interface. Backward must propagate through that rescaling, including into the learned sink parameter. This small example illustrates a broader principle: preserve model semantics at the correct algebraic boundary, rather than independently applying a whole-model correction inside every partition.</p>
+<details><summary>Derivation: the global sink and its gradient</summary><div class="proof">
+<p>Let Z be the visible-token exponential mass and N its weighted value sum. An extra zero-valued sink of mass exp(a) changes o=N/Z to y=N/(Z+exp(a)). With L=log Z:</p>
+<pre class="equation">L_total = logaddexp(L, a)
+w = exp(L - L_total)
+y = w * o
+
+for g = dJ/dy:
+dJ/do = w * g
+dJ/dL = w * (1-w) * dot(g, o)
+dJ/da = -w * (1-w) * dot(g, o)</pre>
+<p>The token scores receive the LSE adjoint in addition to the ordinary attention-output adjoint. Applying the denominator correction without this gradient path would produce plausible forward outputs and wrong training gradients. Equivalently, treat the sink as one extra partition with output zero and LSE a, then use the general merge derivative.</p>
+<p>Tree position handling is a separate invariant. An ancestor has one physical identity shared by descendants, while a descendant's logical offset depends on its path. Storage permutations may change physical indices, but they must preserve both ancestry and logical positions. Masks and rotary embeddings must use the latter where required by the model.</p>
+</div></details>
+</section>
+
+<section id="glm">
+<p class="section-number">07 / Change how keys are selected</p>
+<h2>GLM-5.2: parallelize the search as well as the attention</h2>
+<p class="section-answer">A learned indexer first chooses the keys. ART distributes that choice, merges canonical token IDs, and gives a combined KV buffer to an efficient sparse-attention kernel.</p>
+<p>Dense attention computes scores for every visible key in every attention head. GLM-5.2 uses a separate, cheaper learned indexer to choose a limited number of visible tokens, then performs its main attention only on those choices. <strong>Multi-head latent attention (MLA)</strong> stores a compressed representation of KV, reducing KV storage and transport relative to storing a separate expanded KV vector for every query head.</p>
+<p>The model configuration behind these experiments has 78 layers and hidden width 6,144. Attention has 64 heads, a 2,048-dimensional compressed query projection, a 512-dimensional KV latent, and value dimension 256 per head. Its indexer has 32 heads of dimension 128 and selects up to 2,048 tokens per query. The first three MLP layers are dense; later layers have 256 routed experts plus a shared expert. The MLP and attention designs are independent reasons this model differs from an ordinary dense Transformer.</p>
+<p>The indexer's score is itself a small multi-head computation. Each indexer head compares its projected query with a shared projected key, applies ReLU to that dot product, and contributes through an input-dependent head weight. Summing these contributions gives one scalar candidate score, with the model's scale factors included in the projected quantities and weights below. This is not the main attention head's softmax probability. Tree visibility first determines which candidates are eligible; the indexer then chooses among them.</p>
+<pre class="equation">index_score(i,j) = sum_h weight(i,h)
+                         * max(dot(index_q(i,h), index_k(j)), 0)
+
+selected_ids(i) = top_k visible j by index_score(i,j)</pre>
+<p>The expensive part is not only the final sparse operation. The indexer must inspect the query's visible candidates, score them, and select top-k. Its scoring and selection are separate from the softmax in the main attention. The architecture amortizes this work with <strong>IndexShare</strong>: a full-index layer computes routes and following shared-index layers reuse them. In this configuration the first three layers compute their own indices, followed by repeating groups of one full-index layer and three shared-index layers. Shared layers reuse token choices, not another layer's KV values.</p>
+<pre class="equation">hidden tokens
+  -> Q / compressed-KV projections
+  -> full layer: score candidates and choose token IDs
+     shared layer: reuse preceding full layer's token IDs
+  -> sparse MLA over the selected KV rows
+  -> output projection and residual
+  -> dense or mixture-of-experts MLP</pre>
+<h3>The sparse kernel already takes a list of KV rows</h3>
+<p>This interface is the key to reuse. A sparse MLA kernel accepts queries, a KV buffer, and a per-query list of indices into that buffer. It does not need to know that the values came from different GPUs or that visibility originated in a prefix tree. ART can reorganize and remap the input without replacing all of the kernel's highly tuned arithmetic.</p>
+<p>MLA's compression survives this boundary. ART folds the key expansion into the query projection, so the kernel compares a transformed query directly with the compressed KV latent plus its positional component. It accumulates a weighted sum in latent space; the value expansion happens afterward. It does not send an expanded 64-head KV tensor merely to run the distributed operation. That is both a memory saving and a reason to preserve this kernel interface carefully.</p>
+<p>On a full-index layer, each scheduled candidate stage produces scores paired with <strong>canonical token IDs</strong>: identities in the packed tree, independent of the stage's temporary storage. The query owner merges these candidates into its global top-k. Then it assembles the required stage KVs into a combined buffer and maps each winning ID to that buffer's row. One sparse MLA call consumes the resulting list.</p>
+<figure class="cp-figure"><div data-figure="sparse-mla"></div><figcaption><strong>Identity first, storage offset second.</strong> Ties in this example use descending score then ascending token ID, giving 9,17,4. A plan may rearrange the combined KV buffer without changing the selected tokens.</figcaption></figure>
+<p>Why not call sparse MLA separately for every candidate stage? After selecting a fixed total of k keys, each stage may hold only a small and uneven part of them. Separate calls repeat launch, bookkeeping, and intermediate-output work. Combining the selected address space allows the kernel to see one normal sparse problem. Backward splits dKV using the saved buffer boundaries and returns contributions to their owners, just as in dense CP.</p>
+<p>IndexShare makes canonical IDs especially important. Reusing temporary offsets from another layer or plan would confuse “row 17 in this receive buffer” with “token 17 in the input.” The former changes with placement; the latter is a stable model choice. Any routing tie rule must also remain independent of message arrival or rank order.</p>
+<h3>Where ART actually changed the kernels</h3>
+<p>The sparse kernels were adapted from Miles GLM and TileLang's DeepSeek-V3.2 work. Their GPU schedules are valuable starting points, not untouchable black boxes. ART added variable-length CP integration, canonical route handling, combined KV execution, supported TP-local head counts, and kernel changes where the original geometry was inefficient or incorrect under the pinned toolchain.</p>
+<p>One important backward issue is <strong>atomic contention</strong>. Many queries may select the same shared-prefix key. They all contribute to its dK/dV, and parallel programs must add to common locations safely. Atomics provide that addition, but contending updates can serialize. ART used four FP32 accumulation shards for dKV followed by a reduction. This spends temporary memory and an extra reduction to reduce contention in the dominant kernel. It is a general response to shared-key fan-in, not a special rule for one prompt length.</p>
+<p>Indexer work also suffered from launch shape. Grouping rectangles that share query ranges reduced 1,715 rectangle programs to 286 grouped-query programs in the recorded case. Making query/key extents runtime arguments removed repeated specialization as sequences changed. These changes affect different costs: grouping improves GPU work organization; dynamic extents remove compilation from changing-input execution. They should not be conflated into a single arithmetic speedup.</p>
+<p>Other work repaired a pinned TileLang backward problem that could produce NaN dQ, handled invalid route sentinels, preserved the LSE log-base convention, and tuned SM100 dQ using its tensor-core instructions with explicit shared-buffer synchronization. Correctness at these interfaces is essential: a kernel with a faster but incompatible LSE convention breaks the same merge derivative we derived earlier.</p>
+<div class="table-wrap"><table><caption>Measured adaptations, with their actual comparison scopes</caption><thead><tr><th>Change</th><th>Before &rarr; after</th><th>What this establishes</th></tr></thead><tbody>
+<tr><td>Combined-KV CP2 operation, S1024 / top-k 128</td><td>4.525 &rarr; 3.414 ms</td><td>24.6% lower operation time; peak allocation 0.415 &rarr; 0.243 GiB.</td></tr>
+<tr><td>Canonical CP2 indexer launch/specialization work</td><td>711.4 &rarr; 158.2 ms</td><td>About 4.5x in this indexer comparison, not the whole model.</td></tr>
+<tr><td>Representative S8192 sparse backward</td><td>47.834 &rarr; 35.537 ms</td><td>25.7% lower backward time in that probe.</td></tr>
+<tr><td>Old Triton fallback versus repaired TileLang, S8192/H64/K2048 stress</td><td>375.605 &rarr; 34.649 ms</td><td>10.8x against a poor fallback at this geometry; not a 10x gain over the qualified production kernel.</td></tr>
+</tbody></table></div>
+<p>That last distinction matters. A valid, matched-shape stress comparison can still be the wrong headline for realistic training. The quarter-off backward result and the combined-KV operation result are more useful estimates of production impact. None of these percentages should be multiplied together: they measure different scopes and, in some cases, different baselines.</p>
+<details><summary>Proof: stage-local top-k is enough to recover global top-k</summary><div class="proof">
+<p>Assume each visible candidate belongs to one stage and every stage uses the same total ordering: first by decreasing score, then the canonical tie rule. If candidate x is not in its stage's top-k, at least k candidates in that stage outrank it. Those k also exist in the global set, so x cannot be in the global top-k. Therefore the global winners are contained in the union of the stage-local top-k sets.</p>
+<p>The owner can merge those sets without receiving a full dense score matrix. This does not make the indexer free: stages still have to compute the required scores. It also does not imply that the main sparse KV fetch is only k tokens total, because different queries select different keys and the union can be much larger.</p>
+<p>Deduplicate any repeated candidate identities before applying this reasoning. Padding entries must not compete with real tokens. Stable selection order is necessary when tied scores straddle the k boundary, not just for aesthetically consistent output lists.</p>
+<p>For the figure, stage A has (0.91,17) and (0.86,4); stage B has (0.91,9) and (0.72,23). With k=3 and ascending IDs for ties, the winners are 9,17,4. If the combined buffer stores IDs [17,4,9,23], the kernel index list is [2,0,1]. Token choices have not changed.</p>
+</div></details>
+<details><summary>Derivation: why MLA can attend directly in latent space</summary><div class="proof">
+<p>Fo…2435 tokens truncated…includes these terms and scales state sizes with actual head/key/value dimensions. Its fit uses more than the 35B shape, including 9B and 397B. It is still an empirical model with bounded search, not a guarantee of globally optimal plans. A fixed “chain above this many tokens” rule would miss both model-size differences and the other work competing for each rank.</p>
+<p>Consecutive GDN layers can retain a GDN-friendly token ownership, an <strong>island</strong>, rather than exchange back after every layer. The residual stream and tokenwise modules must agree on that layout. Attention-to-GDN boundaries perform the required redistribution; TP sequence-parallel split/gather operations must preserve the same token order through the island. Layout is part of the layer contract, including recomputation in backward.</p>
+<details><summary>Derivation: from the token delta rule to the chunked FLA realization</summary><div class="proof">
+<p>This derives the chunk form for one head using a d_k by d_v state, matching the orientation above. Let a chunk have c tokens numbered 0 through c-1. The chunk-start state S_start is unknown during preparation. q_i and k_i have d_k entries; v_i and delta_i have d_v entries; beta_i and alpha_i are scalars. Define log-decay ell_i=log(alpha_i) and cumulative G_i=sum_{t=0}^i ell_t.</p>
+<pre class="equation">S_pre_i = alpha_i S_(i-1)
+delta_i = beta_i (v_i - S_pre_i^T k_i)
+S_i = S_pre_i + k_i delta_i^T</pre>
+<p>Unroll S_pre_i. The incoming state is decayed by tokens 0 through i. A write at j&lt;i is decayed by tokens j+1 through i:</p>
+<pre class="equation">S_pre_i = exp(G_i) S_start
+        + sum_{j&lt;i} exp(G_i-G_j) k_j delta_j^T</pre>
+<p>Substituting this into the delta equation gives a triangular dependency among the deltas:</p>
+<pre class="equation">delta_i^T = beta_i [v_i^T
+  - exp(G_i) k_i^T S_start
+  - sum_{j&lt;i} exp(G_i-G_j) (k_i^T k_j) delta_j^T]</pre>
+<p>Stack row vectors into matrices K [c,d_k], V [c,d_v], and D [c,d_v], where row i of D is delta_i-transpose. Let B be the diagonal c by c matrix of beta values. Define a strictly lower triangular matrix P and a decayed key matrix K_start:</p>
+<pre class="equation">P[i,j] = exp(G_i-G_j) * dot(k_i,k_j), for j&lt;i
+P[i,j] = 0, otherwise
+K_start[i,:] = exp(G_i) * k_i^T
+
+D = B (V - K_start S_start - P D)
+(I + B P) D = B (V - K_start S_start)</pre>
+<p>The diagonal of I+B P is one. FLA uses a small triangular inverse and matrix products, not a general dense inverse over the whole sequence. If A=(I+B P)^(-1), define:</p>
+<pre class="equation">U = A B V           [c,d_v]
+W = A B K_start     [c,d_k]
+D = U - W S_start   [c,d_v]</pre>
+<p>U and W do not depend on S_start. They are the prepared token work we can compute before a distributed prefix scan supplies that state. Chunk size is a kernel scheduling parameter; the expensive square object is c by c, not total-sequence-length squared.</p>
+<h4>Recover both the final state and every output</h4>
+<p>Let R have row j equal to exp(G_last-G_j) k_j-transpose. Then all in-chunk writes propagated to the end give:</p>
+<pre class="equation">S_end = exp(G_last) S_start + R^T D
+      = [exp(G_last) I - R^T W] S_start + R^T U
+
+M = exp(G_last) I - R^T W
+E = R^T U</pre>
+<p>That is the affine summary, obtained without knowing S_start. It includes forgetting and the delta correction. Replacing M with a scalar decay would discard the key-dependent rank-one updates and would implement a different model.</p>
+<p>Outputs read the state after each token's own write. Define Q_start row i as exp(G_i) q_i-transpose, and a lower triangular matrix C including its diagonal:</p>
+<pre class="equation">C[i,j] = exp(G_i-G_j) * dot(q_i,k_j), for j&lt;=i
+Y = Q_start S_start + C D
+  = (Q_start - C W) S_start + C U</pre>
+<p>Any model-specific query scaling is absorbed into Q in these equations. The output formula again separates prepared local work from a correction using the incoming state. FLA's implementation divides these operations among kernels and stores the intermediates useful for its backward; the derivation is not a recommendation to allocate every matrix in Python.</p>
+<h4>Why this remains linear in sequence length</h4>
+<p>For fixed head dimensions and fixed c, every chunk does bounded-size triangular and matrix operations, then carries a fixed-size state. Doubling the number of tokens doubles the number of chunks rather than quadrupling a global score matrix. Constants can still be substantial: multiple kernels, state reads/writes, and low arithmetic intensity can make a linear operator slower than a well-tuned quadratic operator at moderate lengths.</p>
+<p>Numerically, exp(G_i-G_j) is a product of intervening decays. For j&lt;=i and nonpositive log-decays, it is at most one. Computing the difference of cumulative logs avoids dividing two separately underflowed products. Exact-real-arithmetic equivalence does not remove rounding sensitivity in dot products, triangular work, or different state-composition orders. Those need explicit forward and gradient validation, not an “it is linear” assumption.</p>
+</div></details>
+<details><summary>Derivation: affine scans, reverse gradients, and summary cost</summary><div class="proof">
+<p>Represent f(S)=M S+E by (M,E). For chronological transforms a then b, define b composed with a as (M_b M_a, M_b E_a+E_b). Applying a third transform c on either parenthesization gives:</p>
+<pre class="equation">M_c M_b M_a S
+  + M_c M_b E_a + M_c E_b + E_c</pre>
+<p>Thus composition is associative. The identity is (I,0), which also represents an empty shard. A rank with no real tokens must still participate in the scan protocol; identity arithmetic and zero-sized transport are distinct parts of that contract.</p>
+<p>For four scalar examples f_0(s)=0.5s+1, f_1(s)=0.8s+2, f_2(s)=0.6s-1, and f_3(s)=0.9s+0.5, the complete composition is 0.216s+1.112. From s=0, incoming shard states are 0, 1, 2.8, and 0.68. They can be obtained by a prefix scan of the four summaries; no rank needs an earlier rank's token array.</p>
+<p>For backward, write a shard's outputs as Y=F S_in+U and its end state as S_out=M S_in+E, where F abbreviates its prepared output response. Given output gradient dY and an end-state adjoint dS_out:</p>
+<pre class="equation">dS_in = F^T dY + M^T dS_out</pre>
+<p>Appropriate tensor contractions replace the shorthand matrix products for all token outputs. This is an affine dependence on the incoming backward state, so suffix summaries can propagate future effects. Local kernel backward additionally differentiates its prepared quantities to produce dQ, dK, dV and gate gradients. A state-gradient scan alone is not the entire backward pass.</p>
+<p>With H local value heads, an FP32 forward summary contains H d_k(d_k+d_v) elements. For H=32 and d_k=d_v=128, that is 4 MiB per chained segment. A recurrent state is 2 MiB. These are much smaller than a long token shard, but not negligible if a bucket contains many chains. Doubling scan rounds avoid every rank storing every other rank's summary, while adding communication latency and composition work at each round.</p>
+<p>The implementation uses an exclusive-prefix shift and final-state distribution in addition to the doubling rounds. Backward similarly includes suffix and boundary operations. A performance estimate that prices only log2(N) arithmetic multiplications, or only the bytes of one state, understates the real layer.</p>
+</div></details>
+<p class="source">Source anchors: <a href="https://github.com/OpenPipe/ART/blob/e932bff638d9efe46db73ace334656181c302544/src/art/megatron/gdn/fla_cp.py">FLA CP summary/scan implementation</a>, <a href="https://github.com/OpenPipe/ART/blob/e932bff638d9efe46db73ace334656181c302544/src/art/megatron/gdn/gdn_prefix_tree.py">shape-aware runtime model</a>. The derivation expands the project's GDN layer guide.</p>
+</section>
+
+<section id="mamba">
+<p class="section-number">09 / Move the partition instead</p>
+<h2>Mamba-2: each rank gets the whole tree for fewer heads</h2>
+<p class="section-answer">The qualified Nemotron path uses an all-to-all transpose from token shards to head shards, preserving the native SSD kernel instead of using GDN's distributed summary implementation.</p>
+<p>Mamba-2 is also recurrent, but it is not GDN with another name. Its selective state-space model constructs an input-dependent write and read around a decaying state. Within a head, the decay has a simpler structure than GDN's key-dependent matrix correction. Mamba-2's <strong>state-space duality (SSD)</strong> connects this recurrence to structured matrix operations, enabling efficient chunked GPU execution. <a href="https://arxiv.org/abs/2405.21060">Mamba-2 paper</a>.</p>
+<p>In a simplified per-head notation, x is a vector of channels; B and C are state write/read vectors; dt determines the discretized time step. The head's learned decay parameter and dt produce a scalar decay a. A state H maps state coordinates to channels:</p>
+<pre class="equation">H_t = a_t H_(t-1) + x_t b_t^T
+y_t = H_t C_t + D_skip * x_t</pre>
+<p>b_t includes the input/time-step scaling in this notation. The full layer projects x, B, C, dt, and a gate z, applies a short convolution to the appropriate streams, runs SSD, and applies gated normalization and output projection. Several heads can share B/C through groups, so those projected widths need not equal the full number of heads times state dimension.</p>
+<p>The Nemotron Nano configuration studied here contains 52 blocks: 23 Mamba, 23 MoE, and six attention blocks. Its Mamba layers have 64 heads, eight B/C groups, state dimension 128, and convolution width four. These independent heads offer another distributed decomposition: instead of splitting a head's recurrence across ranks, give a rank fewer heads but all physical tokens.</p>
+<figure class="cp-figure"><div data-figure="mamba"></div><figcaption><strong>A distributed transpose, not full-model replication.</strong> Before exchange, each rank has a token subset and all its local projected heads. After exchange, it has every physical token but a subset of heads. The output returns to the original token owners; the gate z stays there throughout.</figcaption></figure>
+<h3>What crosses the network</h3>
+<p>The input projection runs on the original token owners. ART then partitions projected x/B/C/dt by recurrent head assignment and uses one all-to-all to assemble each destination's full-token, partial-head streams. An <strong>all-to-all</strong> lets every rank send a different slice to every other rank. This exchange is a transpose of the token-by-head ownership grid, not an all-gather that replicates every head's tokens everywhere.</p>
+<p>The gate z is not needed by SSD itself. It remains on token owners. After the recurrent computation, the reverse all-to-all brings each token's output head slices home, and gated normalization/output projection proceed in that original layout. Backward reverses the two transposes and accumulates any replicated grouped B/C contributions.</p>
+<p>This differs deliberately from our dense attention strategy. There, queries remain token-sharded while needed KV visits them. Here, the independent head axis lets the recurrence run locally across all tokens. The cost is moving the projected recurrent streams and the output, and the benefit is leaving the native SSD kernel in control of the full sequence for its heads.</p>
+<h3>What the tree wrapper changes</h3>
+<p>After redistribution, each rank still sees a tree, not one ordinary causal array. ART computes the physical tree's convolution once for its channels, gathers recurrent inputs into tree-aware scan buckets, and supplies the correct parent states. The numerical core is the official <code>mamba_ssm 2.3.2.post1</code> SSD scan. Custom Triton kernels handle permutation, gathering, assembly, and the corresponding gradients around it.</p>
+<p>The native chunk interface also shapes state reuse. Complete shared chunks can hand their states to descendants; an unaligned shared suffix is replayed in the child's scan so the native kernel sees its expected chunk realization. That replay is bounded by the chunk size, not the entire prompt. It is a real overhead and must be counted, but it is not the central explanation of scaling. The dominant design choice is the token/head transpose and reuse of native SSD.</p>
+<p>There are limits. A head shard must have a supported width, so CP size cannot grow independently of the number of available heads. If several rank shards need the same B/C group, those narrower streams are replicated and their gradients summed. Full-token metadata is present per recurrent rank, and poorly chosen bucket shapes can introduce padding or extra layout work. “Every rank gets fewer heads” is not proof that every allocation is exactly divided by CP.</p>
+<p>This is also why we do not call Mamba's implementation “the GDN scan path.” Both exploit recurrent structure, and both preserve shared-prefix states, but their network interfaces are different. The measured Nemotron implementation has a qualified CP2 training result and pipeline comparison; we do not yet have a matching CP1/2/4/8 curve from which to claim the same scaling as dense attention.</p>
+<details><summary>Derivation: the transpose, grouped streams, and native SSD reuse</summary><div class="proof">
+<p>Ignore TP for a moment. With N CP ranks, T total tokens and H heads, token ownership starts at roughly [T/N,H] per rank. An all-to-all sends each destination its H/N head slice for all source token shards. The destination receives [T,H/N]. Both contain T H/N token-head entries, even though only the latter permits a local recurrence through the complete token order.</p>
+<pre class="equation">rank r before: tokens owned by r, heads 0 ... H-1
+send to rank j: those tokens, head slice j
+rank j after:  all tokens, head slice j
+
+reverse exchange:
+send each token owner's rows back, then concatenate head slices</pre>
+<p>A permutation's derivative is its inverse. The independent x and output-head streams therefore need transposed movement, not gradient reduction across duplicate full copies. B/C are different when groups are shared across head shards: one source entry can feed several consumers. Its derivative is the sum of those consumers' contributions. Leaving this reduction out would make forward look correct and backward depend on CP size.</p>
+<p>For the scalar-decay state equation, unrolling a chunk gives a weighted sum of writes with weights equal to products of intervening a_t. SSD exploits the structure of this matrix instead of forming a general dense sequence-by-sequence attention matrix. ART does not need to invent another SSD realization to use CP; it supplies full token order for a head shard and the correct tree boundary states to the established kernel.</p>
+<p>The z gate has no role in that recurrence, so transporting it would add bytes without enabling any earlier compute. This is an example of choosing the communication boundary from actual data dependencies rather than indiscriminately exchanging either all hidden activations or every projected channel.</p>
+</div></details>
+<p class="source">Qualified source: <a href="https://github.com/OpenPipe/ART/tree/4013796f96/src/art/megatron/mamba">Nemotron tree operator and exchanges</a>, <a href="https://github.com/OpenPipe/ART/pull/819">implementation and validation PR</a>.</p>
+</section>
+<section id="memory">
+<p class="section-number">10 / Account for the whole rank</p>
+<h2>Which memory scales, and which does not?</h2>
+<p class="section-answer">CP divides token-dependent storage. It does not, by itself, divide model weights, eliminate communication buffers, or make every architecture's temporary state scale identically.</p>
+<p>Suppose a residual tensor has T tokens and hidden width H. With balanced token ownership across N ranks, each rank stores about T H/N elements. Many intermediate activations, Q/K/V projections, and tokenwise gradients have the same dependence. At fixed total T, CP can reduce them. If T grows with N in weak scaling, they can stay approximately constant per rank.</p>
+<p>Parameters behave differently. A rank that owns fewer tokens still needs the weights used on those tokens. CP alone generally replicates dense weights across its ranks. TP, EP, PP, optimizer sharding, or weight offload may address that memory. In a CP8/EP8 MoE run, lower expert-weight memory comes from EP, not from an unexplained property of CP. Adding both axes together is useful, but attribution matters.</p>
+<p><strong>Activation checkpointing</strong>, also called recomputation, saves fewer intermediate activations and recomputes them during backward. It can combine with CP. The recomputed layer must use the same tree, ownership, and communication contract as the original forward. A cached mutable “current layout” that changes before recomputation can corrupt results even if the first forward looked correct.</p>
+<div class="table-wrap"><table><caption>Memory terms that matter to CP</caption><thead><tr><th>Term</th><th>Expected behavior</th><th>Important qualification</th></tr></thead><tbody>
+<tr><td>Residual and token-local activations</td><td>Roughly proportional to local tokens</td><td>Planner imbalance and TP sequence sharding affect the actual maximum.</td></tr>
+<tr><td>Dense attention intermediates</td><td>Tiled kernels avoid a full T-by-T matrix</td><td>Receive buffers, per-stage outputs and saved normalizers remain.</td></tr>
+<tr><td>KV staging and dKV returns</td><td>Depend on fetched ranges and waves</td><td>Temporary replication can offset some activation savings.</td></tr>
+<tr><td>GDN state summaries</td><td>Fixed size per chained segment/head shape</td><td>Many concurrent chains and scan rounds add working state.</td></tr>
+<tr><td>Mamba recurrent tensors</td><td>All tokens, fewer heads after transpose</td><td>Grouped B/C, metadata, and bucket padding are not all reduced identically.</td></tr>
+<tr><td>Model and optimizer state</td><td>Not sharded by CP alone</td><td>Account separately for TP, EP, PP, LoRA, and offload.</td></tr>
+</tbody></table></div>
+<h3>Why CP can be an attractive alternative to more TP or PP</h3>
+<p>Increasing TP splits each matrix multiplication further. That can reduce local matrix efficiency and requires collective results at linear-layer boundaries. Depending on the model, moving compressed KV for attention can be cheaper than moving hidden-width partial linear results repeatedly. CP also leaves larger local channel dimensions for tokenwise matrix multiplication. These are reasons to try it, not a claim that CP always sends fewer bytes on every architecture.</p>
+<p>PP keeps each GPU busy only when its pipeline stage has a microbatch available. Long packed sequences consume substantial memory, limiting how many microbatches we can keep in flight. Hybrid models also make stages hard to balance: an attention block, a GDN block, and an MoE block need not take equal time. Bubbles and uneven stage time can then outweigh small pipeline transport costs.</p>
+<p>CP works within one packed microbatch and can use all ranks on its token-dependent work. That makes it particularly valuable when there are too few independent packed microbatches to fill a deep pipeline. Data parallelism remains valuable once enough separate work and enough memory are available; it avoids the within-sequence communication entirely. The right conclusion is to choose axes according to the limiting resource, not to treat one topology as universally best.</p>
+<p>Finally, distinguish <strong>allocated</strong> memory, live tensors known to the allocator, from <strong>reserved</strong> memory, the allocator's retained blocks. Report the peak across ranks. Different completion lengths and concurrent buffers can change fragmentation and peak reservation without changing the mathematical tensor count. A layer-memory estimate is useful for planning, but a real training run is the proof that the job fits.</p>
+</section>
+
+<section id="results">
+<p class="section-number">11 / Put the mechanisms against measurements</p>
+<h2>How close do we get to the scaling target?</h2>
+<p class="section-answer">Dense attention is very close after its first distributed step. Sparse MLA has a larger fixed CP cost. GDN scales usefully but has a more exposed scan cost. The distinctions are visible in the measurements.</p>
+<p>The plots below show time relative to each series' CP1 time. Ideal weak scaling is a horizontal line at 1: N times the GPUs process roughly N times the physical work in the original time. A ratio of 1.2 at CP8 means 8/1.2, or about 6.7 times, the aggregate throughput of CP1, not a 20% throughput gain. Scaling efficiency is the reciprocal of the time ratio for matched weak-scaling work.</p>
+<figure class="cp-figure"><div data-figure="scaling"></div><figcaption><strong>Recorded operation-level weak scaling.</strong> Each architecture has its own baseline and timing scope; do not compare their normalized heights as absolute performance. The ideal line separates the initial distributed cost from the slope as more ranks are added. Raw times and workload definitions follow.</figcaption></figure>
+<h3>What the workload names actually mean</h3>
+<p>A name describes one family that is repeatedly added to fill a packed row. A row can end with a clipped final segment. Roots remain fixed in these ordinary presets. Except for the explicitly fixed control, completion lengths are independently sampled for each new sequence using rounded, clipped normal draws. This changes tree geometry and ownership, not merely tensor values.</p>
+<div class="table-wrap"><table><caption>Dense-attention workload definitions, in exact tokens</caption><thead><tr><th>Workload</th><th>Root</th><th>Completions per family</th><th>Length distribution</th><th>Base physical row</th></tr></thead><tbody>
+<tr><td>Fixed 5K</td><td>5,000</td><td>16</td><td>Exactly 100</td><td>40,960</td></tr>
+<tr><td>Varied 5K</td><td>5,000</td><td>16</td><td>Mean 100; std 32; clipped 36&ndash;164</td><td>40,960</td></tr>
+<tr><td>Varied dominant</td><td>14,745</td><td>16</td><td>Mean 921; std 96; clipped 729&ndash;1,113</td><td>40,960</td></tr>
+<tr><td>Varied medium-long</td><td>8,000</td><td>8</td><td>Mean 1,000; std 128; clipped 744&ndash;1,256</td><td>40,960</td></tr>
+<tr><td>True completion chain</td><td>32,000</td><td>2</td><td>Mean 32,000; std 4,096; clipped 23,808&ndash;40,192</td><td>98,304</td></tr>
+</tbody></table></div>
+<p>For these weak-scaling dense rows, global packed length is base times CP size. Thus fixed/varied 5K use 40,960, 81,920, 163,840, and 327,680 tokens at CP1/2/4/8. The long-chain row uses 98,304 through 786,432 tokens. The “K” in historical preset names is shorthand, not a substitute for the exact integers in this table.</p>
+<p>The short control is useful for launch and communication overhead. Dominant families test skew and shared-prefix demand. Medium-long completions change the arithmetic-to-traffic ratio. Long segments make within-trajectory dependencies much more expensive. The historical name “true completion chain” describes its long branches; under family-stacking weak scaling, it does not guarantee that the GDN planner chooses a distributed chain at every CP size. That is a property of the actual plan, not the name. Deeper tree tests separately exercise nested shared roots and ragged branching. No one default prompt can establish all of these properties.</p>
+<h3>Dense attention: understand the first jump</h3>
+<div class="table-wrap"><table class="numeric"><caption>H200, BF16 Qwen3.5-35B attention geometry, forward + backward milliseconds</caption><thead><tr><th>Workload</th><th>CP1</th><th>CP2</th><th>CP4</th><th>CP8</th></tr></thead><tbody>
+<tr><td>Fixed 5K</td><td>17.38</td><td>19.54</td><td>19.98</td><td>20.47</td></tr>
+<tr><td>Varied 5K</td><td>17.45</td><td>19.72</td><td>20.47</td><td>20.85</td></tr>
+<tr><td>Varied medium-long</td><td>Not measured</td><td>31.80</td><td>33.79</td><td>34.68</td></tr>
+<tr><td>Varied dominant</td><td>43.07</td><td>53.31</td><td>54.96</td><td>56.83</td></tr>
+<tr><td>True completion chain</td><td>366.13</td><td>382.35</td><td>394.82</td><td>403.83</td></tr>
+</tbody></table></div>
+<p>CP1 has local attention and no remote KV stage or distributed merge. CP2 activates fetches, additional attention stages, normalization merging, and inverse dKV return. On fixed 5K this costs about 2.2 ms in total. Increasing from CP2 to CP8 then quadruples global tokens for only 0.93 ms more operation time. Varied 5K adds 1.13 ms over the same interval. Those are about 95% weak-scaling efficiency relative to CP2.</p>
+<p>This is a mechanistic explanation of the onset, not a claim that every microsecond of the 2.2 ms has been isolated into a universal constant. Our accepted Nsight runs estimated exposed communication at about 0.53, 0.54, and 0.70 ms for fixed CP2/4/8. Most transfer duration overlapped useful work. Additional calls, layout work, and merges still occupy time even when the network is hidden.</p>
+<p>A later source check reproduced fixed CP2/CP4 at 19.405/19.853 ms and varied at 19.536/20.498 ms. The table preserves the accepted CP2/4/8 matrix rather than silently replacing individual entries with whichever run was fastest. The local shape is 32 query heads, four KV heads, and head dimension 128; these are the model's attention tensors, not its GDN state dimensions.</p>
+<h3>Preparation is measurable even when it is amortized</h3>
+<div class="table-wrap"><table class="numeric"><caption>Later source check: per-input preparation versus one attention layer</caption><thead><tr><th>Workload / CP</th><th>CPU plan</th><th>GPU block metadata</th><th>Layer fwd + bwd</th></tr></thead><tbody>
+<tr><td>Fixed / 1</td><td>2.39 ms</td><td>43.70 ms</td><td>17.38 ms</td></tr>
+<tr><td>Fixed / 2</td><td>0.87 ms</td><td>44.36 ms</td><td>19.40 ms</td></tr>
+<tr><td>Fixed / 4</td><td>1.70 ms</td><td>34.52 ms</td><td>19.85 ms</td></tr>
+<tr><td>Varied / 1</td><td>17.10 ms</td><td>45.13 ms</td><td>17.45 ms</td></tr>
+<tr><td>Varied / 2</td><td>25.65 ms</td><td>43.28 ms</td><td>19.54 ms</td></tr>
+<tr><td>Varied / 4</td><td>42.44 ms</td><td>33.82 ms</td><td>20.50 ms</td></tr>
+</tbody></table></div>
+<p>Fixed trees benefit from plan caching; changing trees pay the search and rank-materialization cost. GPU block metadata is a significant setup operation in either case. These costs occur per prepared input/layout, not for every compatible layer. They cannot simply be omitted from end-to-end throughput, and they cannot simply be added to every layer time either. Lookahead determines how much is exposed.</p>
+<p>For the changing CP2 run, the separately summarized forward and backward medians were 5.416 and 14.070 ms, while the end-to-end median was 19.536 ms. Separately selected medians do not necessarily add, and the enclosing measurement includes its own boundaries. Nested span totals across all ranks are even less suitable for additive attribution.</p>
+<div class="callout"><p><strong>A concrete warmup failure.</strong> Four disjoint warmup trees did not give rank 0 a partial-query merge role. When it first received that role in a measured sequence, its backward merge kernel compiled and the peer waited at dKV reduction. The apparent 687.898 ms operation was not hundreds of milliseconds of slow NCCL. With sixteen disjoint warmup trees, that input took 20.260 ms and the changing-input median was 19.536 ms. This distinguishes finite kernel-role warmup from specializing on every new token count.</p></div>
+<h3>GDN: useful scaling, but a less hidden boundary cost</h3>
+<div class="table-wrap"><table class="numeric"><caption>Recorded Qwen3.5 GDN operation matrix, milliseconds</caption><thead><tr><th>Workload</th><th>CP1</th><th>CP2</th><th>CP4</th><th>CP8</th></tr></thead><tbody>
+<tr><td>Varied 5K</td><td>30.0</td><td>35.8</td><td>39.7</td><td>44.1</td></tr>
+<tr><td>Varied medium-long</td><td>27.1</td><td>37.9</td><td>41.7</td><td>43.1</td></tr>
+<tr><td>True completion chain</td><td>66.5</td><td>78.8</td><td>101.5</td><td>114.2</td></tr>
+</tbody></table></div>
+<p>The corresponding CP8/CP1 time ratios are 1.47, 1.59, and 1.72. This is substantial aggregate throughput growth, but not dense attention's nearly flat curve. More of the summary scan, reverse-state propagation, parent-state movement, and layout work remains exposed. Chaining is a tool to reduce local imbalance, not an operation with the same constant cost as a local bucket.</p>
+<p>The comparison also illustrates why asymptotic complexity is not a runtime prediction. The short dense-attention control can be faster than GDN despite its quadratic per-trajectory arithmetic. Efficient attention kernels have high arithmetic intensity and well-amortized tiling; GDN carries state, performs multiple preparation and backward kernels, and pays boundaries. At long completion lengths the difference reverses: the dense long-chain operation is much more expensive. A full-model prediction must use the actual layer mix and dimensions, not an O(T) label.</p>
+<h3>GLM: the learned indexer remains part of the bill</h3>
+<div class="table-wrap"><table class="numeric"><caption>Recorded H200 indexer + sparse MLA operation</caption><thead><tr><th>CP</th><th>Global tokens</th><th>Time</th><th>Peak allocated / rank</th></tr></thead><tbody>
+<tr><td>1</td><td>81,920</td><td>519.3 ms</td><td>29.43 GiB</td></tr>
+<tr><td>2</td><td>163,840</td><td>645.5 ms</td><td>30.35 GiB</td></tr>
+<tr><td>4</td><td>327,680</td><td>633.9 ms</td><td>29.86 GiB</td></tr>
+<tr><td>8</td><td>655,360</td><td>669.4 ms</td><td>30.61 GiB</td></tr>
+</tbody></table></div>
+<p>Eight times the tokens takes 1.289 times the operation time, with similar memory per rank. CP2 introduces route merging, remote candidate stages, combined-KV assembly, and gradient return; the time then stays in a much narrower band through CP8. Sparse backward remains a major optimization target. We do not give an additive indexer/forward/backward split here because the archived component summaries use a different aggregation from the total and do not reconcile as a sum.</p>
+<p>A separate four-layer, production-dimension GLM training test took 4.994/5.644/5.803/5.880 seconds at CP1/2/4/8 with independently varying completions. The CP8 time ratio was 1.177. Peak allocation went from 94.90 to 73.49 GiB per rank, and useful model-FLOP utilization stayed in the 19.1&ndash;22.4% range. This includes surrounding projections, experts, recomputation, loss and backward; it is not the 78-layer model's step time.</p>
+<h3>Across the node boundary</h3>
+<div class="table-wrap"><table class="numeric"><caption>24-layer GLM training, matched H200 placements</caption><thead><tr><th>Placement</th><th>Physical tokens</th><th>Internal step</th><th>Tokens / second</th><th>Useful MFU</th></tr></thead><tbody>
+<tr><td>CP8/EP8, one node</td><td>65,536</td><td>3.849 s</td><td>17,026</td><td>15.43%</td></tr>
+<tr><td>CP8/EP8, four ranks on each node</td><td>65,536</td><td>4.011 s</td><td>16,339</td><td>14.81%</td></tr>
+<tr><td>CP16/EP16, two full nodes</td><td>131,072</td><td>4.240 s</td><td>30,913</td><td>14.33%</td></tr>
+</tbody></table></div>
+<p>The middle row isolates placement: same width and work, but some traffic crosses nodes. It retains 95.96% of the one-node throughput. The last row then doubles both GPUs and tokens. Relative to the split CP8 row, throughput rises about 1.89 times, or <strong>94.60% of ideal twofold weak scaling</strong>. This is not 94.60% of the old absolute throughput; it is efficiency relative to doubling it.</p>
+<p>The result includes EP as well as CP. It says the combined training topology scales well on the measured fabric, not that a network link has a universal 5% penalty. A fixed-work comparison also favored the tested CP-only placements over PP: on eight GPUs, 14,011 versus 11,024 tokens/s for PP2; on sixteen, 27,964 versus 21,610 for PP2 and 20,134 for PP4. Pipeline bubbles and stage balance matter here, not only transport bytes.</p>
+<h3>Mamba: keep the evidence boundary visible</h3>
+<p>The exact 52-layer Nemotron run at CP2/EP2, 128K, BF16 and compilation enabled on B300 measured a steady 3.455-second step and 10.13% useful MFU. Five steady samples had about 1.36% coefficient of variation, without measured post-warmup compilation. This establishes an actual full-schedule training result; it does not establish a CP8 scaling curve.</p>
+<p>A separate reduced 39-layer fixture measured 43,624 physical tokens/s in isolation, 43,469 for matched core training on live-pipeline inputs, and 41,273 end to end. The live core retained 99.64% of isolated throughput, and end to end retained 94.61%. Those comparisons test integration overhead at the same reduced fixture. Mixing them with the exact 52-layer time would create a misleading “speedup.”</p>
+</section>
+
+<section id="methods">
+<p class="section-number">12 / What makes a result transferable</p>
+<h2>Measure the computation real training will execute</h2>
+<p class="section-answer">A good local kernel result is necessary. It is not sufficient until changing trees, gradients, preparation, memory, and the surrounding model agree with it.</p>
+<p>The experiments use several levels of measurement for different questions. Operation labs make ownership, stages, kernel time and communication observable without full-model setup. Stacked-layer benches expose per-layer repetition, layout transitions, and specialization on changing inputs. Isolated backend training adds real parameters, experts, optimizer/adapter work, recomputation and model memory. Live-pipeline checks finally measure how much of that rate survives input supply and job boundaries.</p>
+<p>The throughput tables report physical packed tokens per second, not generated tokens or trajectories per second. A shared prefix contributes physical tokens even when it has no direct loss. When comparing different packing schemes, count completed trajectories or the same training objective as well: removing redundant prefix copies can improve useful throughput while reducing the number of physical tokens executed.</p>
+<p>We keep instrumentation on the lab or harness side. Nsight/NVTX ranges are useful for explaining a trace, but heavy per-module timing and memory hooks can themselves change throughput. A clean throughput run uses the intended compilation setting and avoids those hooks. A diagnostic run supplies attribution, with its overhead and measurement scope stated separately.</p>
+<div class="table-wrap"><table><caption>Costs occur at different cadences</caption><thead><tr><th>Work</th><th>Cadence</th><th>What to report</th></tr></thead><tbody>
+<tr><td>Token packing and tree construction</td><td>Per new input</td><td>CPU wall time and exposed input wait</td></tr>
+<tr><td>Ownership search and execution metadata</td><td>Per distinct layout / geometry</td><td>Planning time, cache hits, lookahead behavior</td></tr>
+<tr><td>GPU block-mask materialization</td><td>Per prepared attention layout</td><td>GPU preparation time and memory</td></tr>
+<tr><td>Kernel compilation / autotuning</td><td>Per compiled signature</td><td>Cold-start time and whether new inputs continue producing signatures</td></tr>
+<tr><td>Attention / recurrence forward and backward</td><td>Per layer invocation</td><td>Max-rank wall time, valid overlap attribution</td></tr>
+<tr><td>Layout exchanges</td><td>At the operator or island boundary</td><td>Bytes, total transfer time, exposed time</td></tr>
+<tr><td>Adapter, optimizer and job lifecycle</td><td>Per step or training job as configured</td><td>Included or excluded from the throughput denominator</td></tr>
+</tbody></table></div>
+<h3>Changing inputs are part of the performance contract</h3>
+<p>A kernel can be fast on a warmed input and unusable if it recompiles whenever the next completion has a different length. Token counts, segment counts, and variable total extents should therefore be runtime inputs where possible. Static model dimensions and a finite set of execution roles can still specialize. The relevant question is whether warmup covers those roles in a reasonable number of independent examples, not whether an exact replay hits its cache.</p>
+<p>In the dense source checks here, sixteen measured trees were distinct from the warmup trees. The fixed control deliberately repeated geometry, while varied workloads sampled lengths afresh. The cold-role example above is why four warmup inputs were not sufficient evidence on their own. A benchmark should record the per-sequence time series and new compilations, not discard an arbitrary number of slow samples until a preferred average appears.</p>
+<h3>Correctness needs more than one output comparison</h3>
+<p>Packed-versus-flattened tests establish that branches cannot read siblings and shared computation matches independent trajectories. Topology oracles compare canonical outputs and gradients across parallel layouts. Tracing must reconstruct original token identity before comparing; otherwise a storage permutation looks like a model error. Exact routing checks catch sparse-index changes that a mean output tolerance could miss.</p>
+<p>For recurrent layers, tests also need parent-state gradients, empty participants, short segments, long chains, and recomputation. A rank skipping a collective is a protocol error even if it has no local arithmetic. Conversely, a large relative gradient error should not be dismissed because the tensor's absolute values are small. Correctness is the algebra <em>and</em> its complete distributed realization.</p>
+<p>Low-precision kernel outputs need dtype-appropriate tolerances, but tuning those tolerances is not a performance optimization. The useful optimization target is preserving the intended math while eliminating needless movement, launches, replication, and serial dependencies. This is why the kernel-reuse boundary is important: we keep mature arithmetic where it works and modify the surrounding organization, or the kernel itself, only where evidence identifies a real limitation.</p>
+<h3>The common idea, after the differences</h3>
+<p>There is no one “CP primitive” that explains all four implementations. Dense attention brings KV to query owners and merges normalized results. GLM first merges a learned choice of token identities, then runs sparse attention over remapped KV. GDN composes transformations of the recurrent state. Mamba redistributes the independent head dimension so native SSD can process each head's tree locally.</p>
+<p>What they share is a method: start from the information dependency, find a compact interface to the efficient local computation, preserve token and gradient ownership, and schedule the remaining communication against actual compute. The planner must model that execution, not a convenient surrogate such as token balance alone. The benchmark must measure that execution on changing inputs, not just its most cache-friendly snapshot.</p>
+<p>The original motivation was a longer useful row. Prefix trees remove duplicate prompt work; CP makes room to process more of the remaining trajectories together. The evidence shows this can be a strong throughput strategy as well as a memory strategy, including across nodes. Understanding why requires both halves: the algebra that permits partitioning, and the execution details that keep partitioning from becoming expensive.</p>
+<details><summary>Evidence ledger: revisions, limitations, and reproduction anchors</summary><div class="proof">
+<p><strong>Dense attention.</strong> Later source checks use ART <code>e932bff638d9efe46db73ace334656181c302544</code>, harness <code>a7ea10ff</code>, H200, BF16, 32 query heads / four KV heads / dimension 128. Accepted CP2/4/8 operation results are retained as a historical matrix, with later CP2/4 checks reported separately. CPU planning and GPU metadata are per-input max-rank medians. No new GPU timing was substituted during this editorial rewrite.</p>
+<p>The source-check artifacts are in the harness worktree under <code>scratch/context_parallelism_blog/h200_attention/</code>; the changing CP2 result is <code>varied_cp2_warm16/attention_spans.md</code>. Profiling hooks live in <code>art_harness/cp_lab/attention_spans.py</code>. The fixed CP2/4/8 exposed-communication values come from the accepted Nsight runs, not a sum of host spans from the later reproduction.</p>
+<p><strong>GLM.</strong> Operation evidence is anchored at ART <code>058583ab</code>/<code>50c38379</code> and harness <code>26d41e3</code>. Corrected variable-shape full-model evidence is ART <code>f49e3691</code>. Multinode evidence belongs to the GLM multinode report and source snapshot <code>e932bff63</code>. The reduced four- and 24-layer tests retain production dimensions but are not full 78-layer runs. Kernel adaptation comparisons have their own scopes, listed alongside each number.</p>
+<p><strong>GDN.</strong> The recorded matrix and runtime-model development are tracked in the prefix-tree GDN optimization log. Operation measurements do not include useful work from input/output linear layers when those are set to no-op to isolate the sequence operator. The dense and GDN results are therefore comparisons of sequence-operation implementations, not whole Qwen model step times. They must not be multiplied by total model layers without respecting the actual layer mix.</p>
+<p><strong>Mamba.</strong> Evidence is from <a href="https://github.com/OpenPipe/ART/pull/819">PR 819</a> at ART <code>4013796f96</code>. Exact-model timing is 52 layers, 128K physical tokens, TP1/CP2/EP2/PP1, BF16 and compilation enabled on B300. Reduced 39-layer isolation/core/E2E numbers share a different fixture. No CP1/2/4/8 Mamba matrix is inferred from them.</p>
+<p><strong>Hardware caveat.</strong> An August source check on B300 measured 58.943 ms for fixed CP2 dense attention because that revision selected the Triton FlexAttention backend on Blackwell, whereas the H200 evidence used Flash. This is a dated backend/configuration difference, not a like-for-like CP regression and not a claim about today's branch. Comparing hardware requires matching the qualified backend.</p>
+<p><strong>Uncertainty.</strong> Small timing differences across revisions and runs are not isolated optimization gains. Separately aggregated spans need not add to separately aggregated totals. The GLM component summaries that do not reconcile were intentionally not presented as an additive breakdown. Current model/branch behavior should be requalified before treating these historical results as deployment guarantees.</p>
+</div></details>
+<details><summary>Definition: useful MFU, and why a high scaling efficiency can coexist with low MFU</summary><div class="proof">
+<p>Model-FLOP utilization divides a model-work estimate by elapsed time times the machine's peak arithmetic rate at the stated precision. Here “useful” work excludes replaying shared prefixes as though every trajectory were flattened. If a model executes one physical prefix, counting it sixteen times in the numerator would artificially inflate MFU.</p>
+<pre class="equation">useful MFU = useful model FLOPs
+           / (elapsed seconds * total GPU peak FLOPs/second)
+
+weak-scaling efficiency = time_at_base / time_at_N
+  when useful work and GPU count both grow by N</pre>
+<p>They measure different things. A memory-bound kernel can use a low fraction of peak tensor-core arithmetic while scaling almost perfectly across GPUs. Sparse gather patterns, atomic reductions, small matrix geometry, launches, and state traffic can all limit MFU without invalidating weak scaling. Conversely, high arithmetic utilization on a rank is not helpful if other ranks are idle or if the work is redundant.</p>
+<p>Checkpoint recomputation and kernel bookkeeping consume real time. A useful-work numerator should not inflate itself to reward that overhead. Comparisons must use the same FLOP convention, layer count, precision and clock assumptions. The numbers here are reported under their source experiments' useful-work convention, rather than treated as universal percentages comparable to every published MFU.</p>
+</div></details>
+</section>
+</article>
+<footer><a href="../prefix-tree-packing/">Previous: Prefix-tree packing</a><span>FurtherAI / ART</span></footer>
+</main></div>
+<script>
+(() => {
+  "use strict";
+
+  const fmt = (value, digits = 3) => Number(value.toFixed(digits)).toString();
+  const range = (n) => Array.from({ length: n }, (_, i) => i);
+  const sum = (values) => values.reduce((a, b) => a + b, 0);
+  const rank = (token) => [0, 1, 4, 5, 6].includes(token) ? 0 : 1;
+  const visible = (q, k) => k <= q && (k < 4 || (q < 7 ? k < 7 : k >= 7));
+  const tokens = (items, selected = -1) => items.map((id) =>
+    `<span class="cpv-token cpv-rank-${rank(id)}${id === selected ? " cpv-selected" : ""}">${id}</span>`).join("");
+  const legend = (items) => `<div class="cpv-legend">${items.map(([color, label]) =>
+    `<span><i class="cpv-swatch" style="--color:var(--cp-${color})"></i>${label}</span>`).join("")}</div>`;
+  const choices = (name, items, selected) => `<div class="cpv-choices" role="group" aria-label="${name}">${items.map(([key, label]) =>
+    `<button type="button" data-choice="${key}" aria-pressed="${key === selected}">${label}</button>`).join("")}</div>`;
+  function shell(mount, title, controls = "") {
+    mount.classList.add("cpv");
+    mount.innerHTML = `<div class="cpv-toolbar"><strong class="cpv-title">${title}</strong>${controls}</div><div class="cpv-body"></div>`;
+    return mount.querySelector(".cpv-body");
+  }
+  function bindChoices(container, render) {
+    container.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-choice]");
+      if (!button) return;
+      button.parentElement.querySelectorAll("button").forEach((item) => item.setAttribute("aria-pressed", item === button));
+      render(button.dataset.choice);
+    });
+  }
+
+  function capacity(mount) {
+    const body = shell(mount, "One root, more completed trajectories", choices("Context parallel size", [1, 2, 4, 8].map((cp) => [String(cp), `CP${cp}`]), "1"));
+    function draw(value) {
+      const cp = Number(value), total = 64 * cp;
+      const tree = (total - 24) / 8, flat = total / 32;
+      const pieces = (isTree) => {
+        const sizes = isTree ? [24, ...Array(tree).fill(8)] : Array.from({ length: flat }, () => [24, 8]).flat();
+        return sizes.map((size, i) => `<span class="${(isTree ? i === 0 : i % 2 === 0) ? "cpv-root-piece" : "cpv-leaf-piece"}" style="flex:0 0 ${100 * size / total}%" aria-hidden="true"></span>`).join("");
+      };
+      body.innerHTML = `<p class="cpv-note">24K-token root &middot; 8K-token completions &middot; 64K physical tokens per rank</p>
+        <div class="cpv-capacity-stats" aria-live="polite"><span><b>${total}K</b> global capacity</span><span><b>${tree}</b> tree trajectories</span><span><b>${flat}</b> flattened trajectories</span></div>
+        <div class="cpv-capacity-row"><div><strong>Prefix tree</strong><span>Root stored once</span></div><div class="cpv-capacity-track" role="img" aria-label="24K root plus ${tree} completions of 8K each">${pieces(true)}</div></div>
+        <div class="cpv-capacity-row"><div><strong>Flattened</strong><span>Root repeated per trajectory</span></div><div class="cpv-capacity-track" role="img" aria-label="${flat} copies of a 24K root and 8K completion">${pieces(false)}</div></div>
+        ${legend([["blue", "Root tokens"], ["green", "Completion tokens"]])}
+        <div class="cpv-equations"><span>Tree: (${total}K &minus; 24K) / 8K = <b>${tree}</b></span><span>Flattened: ${total}K / (24K + 8K) = <b>${flat}</b></span></div>
+        <p class="cpv-takeaway">At CP${cp}, the tree fits <strong>${fmt(tree / flat, 4)}&times;</strong> as many complete trajectories in the same physical token budget. This is packing arithmetic, not a measured speedup.</p>`;
+    }
+    bindChoices(mount, draw);
+    draw("1");
+  }
+
+  function ownership(mount) {
+    const body = shell(mount, "Visibility and ownership are different maps", `<label class="cpv-control">Query token <select aria-label="Query token">${range(9).map((id) => `<option value="${id}"${id === 6 ? " selected" : ""}>${id < 4 ? "Root" : id < 7 ? "A" : "B"}${id}</option>`).join("")}</select></label>`);
+    function draw(value) {
+      const q = Number(value), owner = rank(q);
+      const local = range(9).filter((k) => visible(q, k) && rank(k) === owner);
+      const remote = range(9).filter((k) => visible(q, k) && rank(k) !== owner);
+      body.innerHTML = `<div class="cpv-ownership-grid"><div>
+          <p class="cpv-label">The logical tree</p><div class="cpv-tree-root"><b>Root</b><div class="cpv-token-row">${tokens([0, 1, 2, 3], q)}</div></div>
+          <div class="cpv-tree-branches"><div><b>Branch A</b><div class="cpv-token-row">${tokens([4, 5, 6], q)}</div></div><div><b>Branch B</b><div class="cpv-token-row">${tokens([7, 8], q)}</div></div></div>
+          ${legend([["blue", "Rank 0"], ["violet", "Rank 1"]])}
+          <p class="cpv-note">Rank 0 owns {0, 1, 4, 5, 6}.<br>Rank 1 owns {2, 3, 7, 8}.</p>
+          <p class="cpv-note">An illustrative assignment, not an optimized plan.</p>
+        </div><div><p class="cpv-label">Visible KV columns for each query row</p>
+          <table class="cpv-matrix" aria-label="Attention visibility, colored by KV owner"><thead><tr><th scope="col" aria-label="Query rows">q</th>${range(9).map((k) => `<th scope="col">${k}</th>`).join("")}</tr></thead><tbody>${range(9).map((row) => `<tr${row === q ? ' class="cpv-selected-row"' : ""}><th scope="row">${row}</th>${range(9).map((k) => `<td class="${visible(row, k) ? `cpv-visible cpv-rank-${rank(k)}` : "cpv-invisible"}" aria-label="Query ${row}, KV ${k}: ${visible(row, k) ? `visible, rank ${rank(k)}` : "excluded"}">${visible(row, k) ? "&#9679;" : "&middot;"}</td>`).join("")}</tr>`).join("")}</tbody></table>
+        </div></div>
+        <div class="cpv-query-result" aria-live="polite"><strong>Query ${q} runs on rank ${owner}.</strong><div><span>Local KVs</span><code>${local.length ? local.join(", ") : "none"}</code></div><div><span>Remote KVs to fetch</span><code>${remote.length ? remote.join(", ") : "none"}</code></div></div>
+        <p class="cpv-takeaway">${q >= 4 ? `Sibling branch ${q < 7 ? "B" : "A"} is invisible, wherever its tokens live. ` : "The root cannot see either future branch. "}Changing token ownership changes communication; it does not change the attention mask.</p>`;
+    }
+    mount.querySelector("select").addEventListener("change", (event) => draw(event.target.value));
+    draw(6);
+  }
+
+  function attentionMerge(mount) {
+    const masses = [1, 2, 3, 4], values = [1, 3, 2, 8];
+    const body = shell(mount, "Partial attention outputs carry unequal weight", `<label class="cpv-control">Partition after KV <select aria-label="Partition after KV"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></label>`);
+    function draw(value) {
+      const split = Number(value);
+      const partials = [[0, split], [split, 4]].map(([start, end]) => {
+        const mass = sum(masses.slice(start, end));
+        const numerator = sum(masses.slice(start, end).map((m, i) => m * values[start + i]));
+        return { start, end, mass, numerator, output: numerator / mass };
+      });
+      body.innerHTML = `<p class="cpv-note">One query, four KVs. Here the positive masses are exp(score), and each value is a scalar.</p>
+        <div class="cpv-kv-cells">${masses.map((mass, i) => `<div class="${i < split ? "cpv-part-a" : "cpv-part-b"}"><b>KV${i + 1}</b><span>value ${values[i]}</span><div class="cpv-mass-track"><i style="width:${mass * 25}%"></i></div><span>mass ${mass}</span></div>`).join("")}</div>
+        <div class="cpv-partials">${partials.map((p, i) => `<div class="${i ? "cpv-part-b" : "cpv-part-a"}"><strong>Kernel call ${i + 1}: KV${p.start + 1}${p.end - p.start > 1 ? `&ndash;${p.end}` : ""}</strong><span>Total mass = ${p.mass}</span><span>O${i + 1} = ${p.numerator} / ${p.mass} &asymp; <b>${fmt(p.output)}</b></span><span>LSE${i + 1} = ln(${p.mass}) &asymp; ${fmt(Math.log(p.mass))}</span></div>`).join("")}</div>
+        <p class="cpv-label">Recover each partition's share from LSE</p>
+        <div class="cpv-weight-bar" role="img" aria-label="Merge weights ${partials[0].mass * 10} and ${partials[1].mass * 10} percent">${partials.map((p, i) => `<span class="${i ? "cpv-part-b" : "cpv-part-a"}" style="flex:${p.mass}">${p.mass * 10}%</span>`).join("")}</div>
+        <div class="cpv-merge-answer" aria-live="polite"><div><span>Mass-weighted merge</span><strong>${partials[0].mass}/10 &times; (${partials[0].numerator}/${partials[0].mass}) + ${partials[1].mass}/10 &times; (${partials[1].numerator}/${partials[1].mass}) = <b>4.5</b></strong></div><div><span>Unweighted average</span><strong>(${partials[0].numerator}/${partials[0].mass} + ${partials[1].numerator}/${partials[1].mass}) / 2 &asymp; <b>${fmt(sum(partials.map((p) => p.output)) / 2)}</b></strong></div></div>
+        <p class="cpv-takeaway">Every partition gives the same merged answer: (1&times;1 + 2&times;3 + 3&times;2 + 4&times;8) / 10 = <strong>4.5</strong>. Existing attention kernels already return O and LSE; those are sufficient to merge their results.</p>`;
+    }
+    mount.querySelector("select").addEventListener("change", (event) => draw(event.target.value));
+    draw(2);
+  }
+
+  // Durations below define an illustrative dependency graph, not a profiler trace.
+  function makeSchedule(delay) {
+    const event = (lane, start, end, label, description) => ({ lane, start, end, label, description });
+    const f1 = 3 + delay, f2 = 5 + 2 * delay, forwardEnd = 7.25 + 2 * delay;
+    const reduce2 = 5.5 + delay, reduce1 = Math.max(6.5, reduce2) + 2 + delay;
+    const backwardEnd = Math.max(10, reduce1 + 0.5);
+    const forward = [
+      event(2, 0, 0.5, "P", "Pack outgoing KV"),
+      event(1, 0.5, 2.5 + delay, "F1", "Fetch remote KV block 1"),
+      event(1, 2.5 + delay, 4.5 + 2 * delay, "F2", "Fetch remote KV block 2, on the same NCCL stream"),
+      event(2, 2.5 + delay, f1, "G1", "Gather block 1 after its fetch completes"),
+      event(2, 4.5 + 2 * delay, f2, "G2", "Gather block 2 after its fetch completes"),
+      event(0, 0, 3, "L", "Local attention"), event(0, f1, f1 + 2, "F1", "Attention on remote KV block 1"),
+      event(0, f2, f2 + 2, "F2", "Attention on remote KV block 2"), event(0, f2 + 2, forwardEnd, "M", "Merge partial outputs"),
+    ];
+    const backward = [
+      event(0, 0, 3, "B2", "Backward for remote block 2; produces its dKV"),
+      event(0, 3, 6, "B1", "Backward for remote block 1; produces its dKV"),
+      event(0, 6, 10, "BL", "Local attention backward"),
+      event(2, 3, 3.5, "P2", "Pack dKV2, after B2 has produced it"),
+      event(2, 6, 6.5, "P1", "Pack dKV1, after B1 has produced it"),
+      event(1, 3.5, reduce2, "D2", "Return and reduce dKV2"),
+      event(1, Math.max(6.5, reduce2), reduce1, "D1", "Return and reduce dKV1; waits for packing and for the NCCL stream"),
+      event(2, reduce2, reduce2 + 0.5, "A2", "Accumulate this rank's received gradients from exchange D2"),
+      event(2, reduce1, reduce1 + 0.5, "A1", "Accumulate this rank's received gradients from exchange D1"),
+    ];
+    return {
+      forward, backward, forwardEnd, backwardEnd,
+      forwardWaits: [[3, f1], [f1 + 2, f2]].filter(([a, b]) => b > a),
+      backwardWaits: backwardEnd > 10 ? [[10, backwardEnd]] : [],
+      compute: 17.25, comm: 8 + 4 * delay, layout: 3.5,
+    };
+  }
+
+  function timelineSVG(events, waits, end, width, title) {
+    const vertical = width < 620, names = ["Compute", "NCCL", "Layout"];
+    const left = vertical ? 34 : 80, top = 36, step = vertical ? (width - left - 8) / 3 : 62;
+    const axisEnd = 14, timeScale = vertical ? 40 : (width - left - 18) / axisEnd;
+    const height = vertical ? top + axisEnd * timeScale + 28 : 240;
+    const point = (time, lane) => vertical ? [left + step * lane + step / 2, top + time * timeScale] : [left + time * timeScale, top + step * lane + step / 2];
+    let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${title}"><title>${title}. All times are illustrative milliseconds.</title>`;
+    for (let tick = 0; tick <= axisEnd; tick += 2) {
+      const [x, y] = point(tick, 0);
+      svg += vertical ? `<line class="cpv-gridline" x1="${left}" x2="${width - 8}" y1="${y}" y2="${y}"/><text class="cpv-axis" x="${left - 8}" y="${y + 5}" text-anchor="end">${tick}</text>` : `<line class="cpv-gridline" x1="${x}" x2="${x}" y1="${top}" y2="${height - 22}"/><text class="cpv-axis" x="${x}" y="22" text-anchor="middle">${tick}</text>`;
+    }
+    names.forEach((name, lane) => {
+      const [x, y] = point(0, lane);
+      svg += `<text class="cpv-lane-label" x="${vertical ? x : left - 10}" y="${vertical ? 18 : y + 5}" text-anchor="${vertical ? "middle" : "end"}">${name}</text>`;
+    });
+    for (const [start, finish] of waits) {
+      const [x, y] = point(start, 0), length = (finish - start) * timeScale;
+      svg += `<rect class="cpv-wait" x="${vertical ? x - step * 0.34 : x}" y="${vertical ? y : y - 19}" width="${vertical ? step * 0.68 : length}" height="${vertical ? length : 38}"><title>Exposed wait: ${fmt(start)} to ${fmt(finish)} ms</title></rect>`;
+    }
+    events.forEach((event) => {
+      const [x, y] = point(event.start, event.lane), length = (event.end - event.start) * timeScale;
+      const rx = vertical ? x - step * 0.34 : x, ry = vertical ? y : y - 19;
+      const rw = vertical ? step * 0.68 : length, rh = vertical ? length : 38;
+      const external = vertical ? rh < 18 : rw < 16;
+      svg += `<g class="cpv-event cpv-event-${event.lane}"><title>${event.description}: ${fmt(event.start)} to ${fmt(event.end)} ms</title><rect x="${rx}" y="${ry}" width="${rw}" height="${rh}"/><text x="${external ? rx + rw + 7 : rx + rw / 2}" y="${ry + rh / 2 + 5}" text-anchor="${external ? "start" : "middle"}">${event.label}</text></g>`;
+    });
+    const [endX, endY] = point(end, 0);
+    svg += vertical ? `<line class="cpv-end-line" x1="${left}" x2="${width - 8}" y1="${endY}" y2="${endY}"/><text class="cpv-axis" x="${left}" y="${endY + 22}">${fmt(end)} ms end</text>` : `<line class="cpv-end-line" x1="${endX}" x2="${endX}" y1="${top}" y2="${height - 24}"/><text class="cpv-axis" x="${endX}" y="${height - 5}" text-anchor="end">${fmt(end)} ms end</text>`;
+    svg += "</svg>";
+    return svg;
+  }
+
+  function schedule(mount) {
+    const body = shell(mount, "Follow the dependencies across three streams", `<label class="cpv-control">Extra time per transfer <select aria-label="Extra time per transfer"><option value="0">0 ms</option><option value="1.5" selected>1.5 ms</option><option value="3">3 ms</option></select></label>`);
+    let delay = 1.5;
+    function draw() {
+      const plan = makeSchedule(delay), total = plan.forwardEnd + plan.backwardEnd;
+      body.innerHTML = `<p class="cpv-note">Illustrative schedule for one rank. Only transfer duration changes; compute and layout work stay fixed. Downstream layers are omitted.</p>
+        <div class="cpv-schedule-summary" aria-live="polite"><span><b>${fmt(total)} ms</b> elapsed</span><span><b>${fmt(total - plan.compute)} ms</b> exposed wait</span><span><b>${fmt(plan.compute + plan.comm + plan.layout)} ms</b> sum of busy streams</span></div>
+        <section class="cpv-timeline-section"><strong>Forward: ${fmt(plan.forwardEnd)} ms</strong><p class="cpv-note">L = local attention. F1/F2 = remote fetch and attention. P = send packing. G1/G2 = receive gathering. M = merge.</p><div data-timeline="forward"></div></section>
+        <section class="cpv-timeline-section"><strong>Backward: ${fmt(plan.backwardEnd)} ms</strong><p class="cpv-note">B2/B1 = remote backward; BL = local backward. P = gradient packing, D = dKV exchange, A = owner accumulation. Each exchange sends remote dKV and receives contributions to this rank's KV. The backward clock starts at zero.</p><div data-timeline="backward"></div></section>
+        ${legend([["blue", "Compute"], ["violet", "NCCL"], ["cyan", "Packing / gathering / accumulation"], ["magenta", "Exposed wait (dashed outline)"]])}
+        <div class="cpv-equations"><span>Compute busy: ${fmt(plan.compute)} ms</span><span>NCCL busy: ${fmt(plan.comm)} ms</span><span>Layout busy: ${fmt(plan.layout)} ms</span></div>
+        <p class="cpv-takeaway"><strong>${fmt(total)} ms is the union of these occupied time spans.</strong> Adding per-stream busy time counts overlapped intervals more than once. Forward waits end as soon as the fetched KVs have been gathered; backward finishes only after every required dKV accumulation.</p>`;
+      const width = Math.floor(body.clientWidth);
+      body.querySelector('[data-timeline="forward"]').innerHTML = timelineSVG(plan.forward, plan.forwardWaits, plan.forwardEnd, width, "Forward compute, NCCL, and layout streams");
+      body.querySelector('[data-timeline="backward"]').innerHTML = timelineSVG(plan.backward, plan.backwardWaits, plan.backwardEnd, width, "Backward compute, NCCL, and layout streams");
+    }
+    mount.querySelector("select").addEventListener("change", (event) => { delay = Number(event.target.value); draw(); });
+    let lastWidth = 0;
+    new ResizeObserver(([entry]) => { if (entry.contentRect.width !== lastWidth) { lastWidth = entry.contentRect.width; draw(); } }).observe(body);
+    draw();
+  }
+
+  function planner(mount) {
+    const work = [8, 7, 6, 4, 3, 2];
+    const plans = {
+      tokens: { label: "Equal tokens", owners: [[0, 1, 2], [3, 4, 5]], network: [8, 4], exposed: [3, 1] },
+      work: { label: "Equal query work", owners: [[0, 3, 4], [1, 2, 5]], network: [8, 10], exposed: [5, 6] },
+      runtime: { label: "Shorter critical path", owners: [[0, 3, 5], [1, 2, 4]], network: [6, 4], exposed: [2, 1] },
+    };
+    const elapsed = (plan) => plan.owners.map((items, i) => sum(items.map((id) => work[id])) + plan.exposed[i]);
+    const body = shell(mount, "Equal amounts of work need not finish together", choices("Assignment objective", Object.entries(plans).map(([key, plan]) => [key, plan.label]), "tokens"));
+    function draw(key) {
+      const plan = plans[key], times = elapsed(plan), critical = Math.max(...times);
+      body.innerHTML = `<p class="cpv-note">Six equal-token query chunks; two ranks. Numbers below are stipulated model inputs for illustration, in milliseconds.</p>
+        <div class="cpv-chunk-work">${work.map((time, id) => `<span><b>Q${id}</b>${time} ms compute</span>`).join("")}</div>
+        <div class="cpv-plan-ranks">${plan.owners.map((items, i) => `<div class="cpv-plan-rank"><div><strong>Rank ${i}: ${items.map((id) => `Q${id}`).join(", ")}</strong><span>${sum(items.map((id) => work[id]))} compute + ${plan.exposed[i]} exposed = <b>${times[i]} ms</b></span></div><div class="cpv-plan-bar" role="img" aria-label="Rank ${i}, ${sum(items.map((id) => work[id]))} ms compute then ${plan.exposed[i]} ms equivalent exposed wait">${items.map((id) => `<span class="cpv-work-piece" style="width:${work[id] / 24 * 100}%">Q${id}</span>`).join("")}<span class="cpv-network-piece" style="width:${plan.exposed[i] / 24 * 100}%"></span><i class="cpv-finish-line" style="left:${critical / 24 * 100}%"></i></div><p class="cpv-note">Network busy ${plan.network[i]} ms; ${plan.network[i] - plan.exposed[i]} ms overlaps other work.</p></div>`).join("")}</div>
+        ${legend([["blue", "Query computation"], ["magenta", "Exposed communication"]])}
+        <p class="cpv-note">Bars collect exposed waits at the end for comparison. A real schedule can interleave those gaps with compute.</p>
+        <table class="cpv-plan-table"><thead><tr><th>Assignment</th><th>Slowest rank</th></tr></thead><tbody>${Object.entries(plans).map(([name, p]) => `<tr${name === key ? ' class="cpv-table-selected"' : ""}><td>${p.label}</td><td>${Math.max(...elapsed(p))} ms</td></tr>`).join("")}</tbody></table>
+        <p class="cpv-takeaway" aria-live="polite"><strong>${plan.label}: ${critical} ms.</strong> ${key === "tokens" ? "Equal token counts leave 21 ms of compute on one rank and 9 ms on the other." : key === "work" ? "Compute is exactly balanced, but exposed transfers extend the slowest rank to 21 ms." : "Allowing a little compute imbalance can reduce the completion time when the new placement also shortens exposed communication."} These three candidates illustrate the objective, not a proof of global optimality.</p>`;
+    }
+    bindChoices(mount, draw);
+    draw("tokens");
+  }
+
+  function visibility(mount) {
+    const body = shell(mount, "A window follows the branch, not the packed row");
+    const cell = (id, logical, active, query = false) => `<span class="cpv-path-cell${active ? " cpv-path-visible" : " cpv-path-excluded"}${query ? " cpv-selected" : ""}"><b>${id}</b>${logical !== null ? `<small>pos ${logical}</small>` : ""}</span>`;
+    const path = [0, 1, 2, 3, 7, 8];
+    body.innerHTML = `<p class="cpv-note">Query B8 is at physical offset 8, but at logical position 5 on its root-to-leaf path. The window includes the current token.</p>
+      <p class="cpv-label">Physical packed storage</p><div class="cpv-storage-labels"><span>Root</span><span>Branch A</span><span>Branch B</span></div><div class="cpv-storage">${range(9).map((id) => cell(id, null, id < 4 || id >= 7, id === 8)).join("")}</div>
+      <p class="cpv-note">Tokens 4, 5, 6 belong to a sibling branch and are never visible to B8.</p>
+      <div class="cpv-path-row"><strong>Causal: all six ancestors / self</strong><div>${path.map((id, pos) => cell(id, pos, true, id === 8)).join("")}</div></div>
+      <div class="cpv-path-row"><strong>Window 3: the last three logical positions</strong><div>${path.map((id, pos) => cell(id, pos, pos >= 3, id === 8)).join("")}</div></div>
+      <p class="cpv-takeaway">Window 3 selects physical tokens <strong>{3, 7, 8}</strong>. Taking the last three entries in physical storage would wrongly include sibling token 6 and miss ancestor token 3.</p>`;
+  }
+
+  function sparseMla(mount) {
+    const body = shell(mount, "Canonical token IDs survive every staging decision");
+    body.innerHTML = `<p class="cpv-note">Two KV stages contribute candidates for query q0. Select the global best three, breaking score ties by smaller canonical ID.</p>
+      <div class="cpv-candidate-stages">${[[[0.91, 17], [0.86, 4]], [[0.91, 9], [0.72, 23]]].map((items, i) => `<div><strong>Stage ${i ? "B" : "A"}</strong><table><thead><tr><th>Score</th><th>Token ID</th></tr></thead><tbody>${items.map(([score, id]) => `<tr><td>${score.toFixed(2)}</td><td>${id}</td></tr>`).join("")}</tbody></table></div>`).join("")}</div>
+      <ol class="cpv-sparse-steps"><li><strong>Merge the selected IDs</strong><div class="cpv-id-sequence"><span>9 <small>0.91</small></span><span>17 <small>0.91</small></span><span>4 <small>0.86</small></span></div><p>For q0: <code>[9, 17, 4]</code>. Equal scores put ID 9 before ID 17. Another query q1 selects <code>[17, 23, 9]</code>.</p></li>
+      <li><strong>Assemble stage KVs once</strong><p>The combined buffer follows the planned KV stages: A contributes <code>[17, 4]</code>, B contributes <code>[9, 23]</code>. It can contain unselected KVs; q0 does not select KV23. The kernel's index list controls which entries each query reads.</p></li>
+      <li><strong>Map IDs into combined KV storage</strong><div class="cpv-combined-kv">${[17, 4, 9, 23].map((id, offset) => `<div><small>offset ${offset}</small><b>KV ${id}</b></div>`).join("")}</div></li>
+      <li><strong>Call the sparse kernel with explicit index lists</strong><div class="cpv-equations"><code>sparse_mla(q, combined_kv, kv_indices)</code><span>q0: [9, 17, 4] &rarr; offsets <b>[2, 0, 1]</b></span><span>q1: [17, 23, 9] &rarr; offsets <b>[0, 3, 2]</b></span></div></li></ol>
+      <p class="cpv-takeaway">The kernel receives the same selected KVs even when their owners and temporary buffer offsets change. Its explicit-index interface is what makes this decomposition possible.</p>`;
+  }
+
+  function gdn(mount) {
+    const summaries = [[0.5, 1], [0.8, 2], [0.6, -1], [0.9, 0.5]];
+    const compose = ([a, b], [c, d]) => [a * c, a * d + b];
+    const inclusive = summaries.reduce((out, pair) => [...out, compose(pair, out.length ? out[out.length - 1] : [1, 0])], []);
+    const body = shell(mount, "Summarize in parallel, then correct with the incoming state", `<label class="cpv-control">Initial state s0 <input type="range" aria-label="Initial state s0" min="0" max="4" step="0.5" value="0"><output>0</output></label>`);
+    function draw(value) {
+      const initial = Number(value), entries = [[1, 0], ...inclusive.slice(0, -1)].map(([a, b]) => a * initial + b);
+      const outputs = summaries.map(([a, b], i) => a * entries[i] + b), final = outputs[3];
+      mount.querySelector("output").textContent = fmt(initial);
+      body.innerHTML = `<p class="cpv-note">A scalar example of a root segment split across four ranks. GDN's actual state is a matrix; the same composition rule applies.</p>
+        <p class="cpv-step-title"><b>1</b> Each rank summarizes its own token slice concurrently</p>
+        <div class="cpv-affine-ranks">${summaries.map(([m, e], i) => `<div><strong>Rank ${i}</strong><span>M = ${m}</span><span>E = ${e}</span></div>`).join("")}</div>
+        <p class="cpv-step-title"><b>2</b> Compose summaries with an affine prefix scan</p>
+        <div class="cpv-scan"><div><code>(M2, E2) &#8728; (M1, E1)<br>= (M2 M1, M2 E1 + E2)</code><p>Round 1 combines neighboring summaries. Round 2 combines summaries two ranks apart. Vertical lines retain the local result; diagonal arrows carry earlier prefixes.</p></div>
+          <div class="cpv-scan-network"><div>${range(4).map((i) => `<span>Rank ${i}</span>`).join("")}</div><svg viewBox="0 0 640 166" role="img" aria-label="Two scan rounds across four ranks: first offset one, then offset two"><defs><marker id="cpv-scan-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8"/></marker></defs>${range(4).map((i) => `<path class="cpv-scan-retain" d="M${80 + i * 160},10 V154"/>`).join("")}${[[0, 1, 10], [1, 2, 10], [2, 3, 10], [0, 2, 82], [1, 3, 82]].map(([from, to, y]) => `<path class="cpv-scan-message" marker-end="url(#cpv-scan-arrow)" d="M${80 + from * 160},${y} L${80 + to * 160 - 10},${y + 68}"/>`).join("")}${[10, 82, 154].map((y) => range(4).map((i) => `<circle cx="${80 + i * 160}" cy="${y}" r="6"/>`).join("")).join("")}</svg><p>Top: local maps. Middle: first round.<br>Bottom: inclusive prefix summaries.</p></div></div>
+        <p class="cpv-step-title"><b>3</b> Apply the incoming state to each rank's local result</p>
+        <div class="cpv-affine-ranks cpv-corrected" aria-live="polite">${entries.map((entry, i) => `<div><strong>Rank ${i}</strong><span>in <b>${fmt(entry)}</b></span><span>out <b>${fmt(outputs[i])}</b></span></div>`).join("")}</div>
+        <div class="cpv-fanout"><div><span>Final root state</span><strong>${fmt(final)}</strong></div><div class="cpv-children">${["A", "B", "C"].map((name) => `<span>Child ${name}<br>starts at <b>${fmt(final)}</b></span>`).join("")}</div></div>
+        <details class="cpv-details"><summary>Follow the two scan rounds numerically</summary><div class="cpv-table-scroll"><table><thead><tr><th>Summary</th>${range(4).map((i) => `<th>Rank ${i}</th>`).join("")}</tr></thead><tbody><tr><th>Local (M, E)</th>${summaries.map((p) => `<td>${p.join(", ")}</td>`).join("")}</tr><tr><th>Distance 1</th>${summaries.map((p, i) => `<td>${(i ? compose(p, summaries[i - 1]) : p).map((v) => fmt(v)).join(", ")}</td>`).join("")}</tr><tr><th>Distance 2</th>${inclusive.map((p) => `<td>${p.map((v) => fmt(v)).join(", ")}</td>`).join("")}</tr></tbody></table></div><p>Row 3 is inclusive: rank i has composed summaries 0 through i. A rank's <em>incoming</em> state uses the preceding prefix (or s0 for rank 0). The final map is 0.216 s0 + 1.112.</p></details>
+        <p class="cpv-takeaway">Expensive token work is rank-local and parallel. The dependency between ranks is resolved by composing affine maps, rather than waiting for another rank to execute its entire token slice.</p>`;
+    }
+    mount.querySelector("input").addEventListener("input", (event) => draw(event.target.value));
+    draw(0);
+  }
+
+  function mamba(mount) {
+    const body = shell(mount, "Transpose token ownership into head ownership");
+    function grid(heads) {
+      return `<table class="cpv-head-grid" aria-label="${heads ? "Head-sharded" : "Token-sharded"} ownership"><thead><tr><th>Token</th>${range(4).map((h) => `<th>H${h}</th>`).join("")}</tr></thead><tbody>${range(8).map((t) => `<tr><th>T${t}</th>${range(4).map((h) => `<td class="cpv-rank-${heads ? Number(h >= 2) : Number(t >= 4)}">${heads ? Number(h >= 2) : Number(t >= 4)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    }
+    body.innerHTML = `<p class="cpv-note">Two ranks, eight illustrative token rows, four heads. Each cell names the rank that owns that token/head slice. The exchanged streams are x, B, C and dt.</p>
+      ${legend([["blue", "Rank 0"], ["violet", "Rank 1"]])}
+      <div class="cpv-mamba-panels"><div><strong>1. Before all-to-all</strong><p>Each rank has its token slice, across every head.</p>${grid(false)}</div><div><strong>2. After all-to-all</strong><p>Each rank has the full tree, for its head slice.</p>${grid(true)}<div class="cpv-native-kernel">Native SSD kernel<br>full sequence per owned head</div></div><div><strong>3. Inverse all-to-all</strong><p>Output returns to the original token owners.</p>${grid(false)}</div></div>
+      <div class="cpv-z-lane"><strong>Gate z stays token-local</strong><span>Rank 0 keeps T0&ndash;T3.<br>Rank 1 keeps T4&ndash;T7.</span><span>Apply the gate after the output returns to those same owners.</span></div>
+      <p class="cpv-takeaway">The transpose gives an existing SSD kernel complete sequences while preserving distributed work across heads. Gate z does not need to make the round trip.</p>`;
+  }
+
+  const scalingData = {
+    dense: { title: "Dense attention", series: [
+      { name: "Fixed 5K", color: "blue", values: [17.38, 19.54, 19.98, 20.47] },
+      { name: "Varied 5K", color: "cyan", values: [17.45, 19.72, 20.47, 20.85] },
+    ] },
+    gdn: { title: "GDN", series: [
+      { name: "Varied 5K", color: "green", values: [30, 35.8, 39.7, 44.1] },
+      { name: "Medium long", color: "cyan", values: [27.1, 37.9, 41.7, 43.1] },
+      { name: "Completion chain", color: "violet", values: [66.5, 78.8, 101.5, 114.2] },
+    ] },
+    glm: { title: "GLM indexer + sparse MLA", series: [
+      { name: "GLM", color: "magenta", values: [519.3, 645.5, 633.9, 669.4] },
+    ] },
+  };
+  function scaling(mount) {
+    const body = shell(mount, "Weak scaling: more total work, ideally the same time");
+    mount.querySelector(".cpv-toolbar").insertAdjacentHTML("beforeend", `<div class="cpv-scaling-controls">${choices("Operator", [["dense", "Dense attention"], ["gdn", "GDN"], ["glm", "GLM"]], "dense")}<label class="cpv-control">Y axis <select aria-label="Scaling units"><option value="relative">Relative to CP1</option><option value="absolute">Milliseconds</option></select></label></div>`);
+    let key = "dense", absolute = false;
+    function draw() {
+      const data = scalingData[key], width = Math.floor(body.clientWidth), height = 324;
+      const margin = { left: 46, right: 18, top: 22, bottom: 44 }, plotWidth = width - margin.left - margin.right, plotHeight = height - margin.top - margin.bottom;
+      const step = absolute ? (key === "glm" ? 200 : key === "gdn" ? 30 : 6) : 0.5, ymax = step * 4;
+      const x = (i) => margin.left + plotWidth * i / 3, y = (value) => margin.top + plotHeight * (1 - value / ymax);
+      let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${data.title} weak scaling, ${absolute ? "milliseconds" : "runtime divided by CP1"}"><title>${data.title}: forward plus backward time as global work grows with CP size. Dashed lines show ideal weak scaling.</title>`;
+      range(5).forEach((tick) => { const value = step * tick; svg += `<line class="cpv-gridline" x1="${margin.left}" x2="${width - margin.right}" y1="${y(value)}" y2="${y(value)}"/><text class="cpv-axis" x="${margin.left - 8}" y="${y(value) + 5}" text-anchor="end">${fmt(value)}${absolute ? "" : "x"}</text>`; });
+      [1, 2, 4, 8].forEach((cp, i) => { svg += `<text class="cpv-axis" x="${x(i)}" y="${height - 15}" text-anchor="middle">CP${cp}</text>`; });
+      (absolute ? data.series : [{ color: null, values: [1] }]).forEach((series) => { const value = series.values[0]; svg += `<path class="cpv-ideal" ${series.color ? `style="stroke:var(--cp-${series.color})"` : ""} d="M${x(0)},${y(value)} L${x(3)},${y(value)}"/>`; });
+      data.series.forEach((series, s) => {
+        const values = series.values.map((v) => absolute ? v : v / series.values[0]);
+        svg += `<g style="--color:var(--cp-${series.color})"><path class="cpv-series" d="${values.map((v, i) => `${i ? "L" : "M"}${x(i)},${y(v)}`).join(" ")}"/>`;
+        values.forEach((v, i) => {
+          const title = `${series.name}, CP${[1, 2, 4, 8][i]}: ${fmt(series.values[i], 2)} ms, ${fmt(series.values[i] / series.values[0])} times CP1`;
+          svg += s === 1 ? `<rect class="cpv-point" x="${x(i) - 4}" y="${y(v) - 4}" width="8" height="8"><title>${title}</title></rect>` : s === 2 ? `<path class="cpv-point" d="M${x(i)},${y(v) - 5} l5,5 -5,5 -5,-5 Z"><title>${title}</title></path>` : `<circle class="cpv-point" cx="${x(i)}" cy="${y(v)}" r="4.5"><title>${title}</title></circle>`;
+        });
+        svg += "</g>";
+      });
+      svg += "</svg>";
+      body.innerHTML = `<p class="cpv-note">${data.title} &middot; forward + backward &middot; global work grows 1&times;, 2&times;, 4&times;, 8&times;</p>
+        <div class="cpv-scaling-plot">${svg}</div>
+        ${legend(data.series.map((s) => [s.color, `${s.name}: CP8 ${fmt(s.values[3], 2)} ms (${fmt(s.values[3] / s.values[0], 2)}&times; CP1)`]))}
+        <p class="cpv-note cpv-ideal-key"><i></i>Dashed: ${absolute ? "each workload's CP1 time" : "1.0x CP1 time"}, the ideal weak-scaling target.</p>
+        <details class="cpv-details"><summary>Exact plotted values (milliseconds)</summary><div class="cpv-table-scroll"><table><thead><tr><th>Workload</th>${[1, 2, 4, 8].map((cp) => `<th>CP${cp}</th>`).join("")}</tr></thead><tbody>${data.series.map((s) => `<tr><th>${s.name}</th>${s.values.map((v) => `<td>${v}</td>`).join("")}</tr>`).join("")}</tbody></table></div></details>`;
+    }
+    bindChoices(mount.querySelector(".cpv-choices"), (choice) => { key = choice; draw(); });
+    mount.querySelector("select").addEventListener("change", (event) => { absolute = event.target.value === "absolute"; draw(); });
+    let lastWidth = 0;
+    new ResizeObserver(([entry]) => { if (entry.contentRect.width !== lastWidth) { lastWidth = entry.contentRect.width; draw(); } }).observe(body);
+    draw();
+  }
+
+  const renderers = { capacity, ownership, "attention-merge": attentionMerge, schedule, planner, visibility, "sparse-mla": sparseMla, gdn, mamba, scaling };
+  function init() {
+    document.querySelectorAll(".cp-figure [data-figure]").forEach((mount) => renderers[mount.dataset.figure](mount));
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
+  else init();
+})();
+
+</script>
+<script>
+const compactContents = matchMedia('(max-width: 600px)');
+const contentsMenu = document.querySelector('.contents-menu');
+function setContentsLayout() { contentsMenu.open = !compactContents.matches; }
+setContentsLayout();
+compactContents.addEventListener('change', setContentsLayout);
+</script>
+</body></html>
