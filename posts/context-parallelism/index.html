@@ -12,7 +12,7 @@
 </head>
 <body>
 <a class="skip-link" href="#article">Skip to article</a>
-<header class="site-header"><a href="../../" class="brand">FurtherAI</a><nav aria-label="Site"><a href="../prefix-tree-packing/">Prefix-tree packing</a><a href="https://github.com/OpenPipe/ART">ART</a><button type="button" data-theme-toggle title="Switch color theme">Dark</button></nav></header>
+<header class="site-header"><a href="https://github.com/FurtherAI" class="brand">FurtherAI</a><nav aria-label="Site"><a href="https://github.com/FurtherAI/blog/blob/d1fa0d5600b7f0d04a5bf039d58dd8aab0e9e7c8/posts/prefix-tree-packing/index.html">Prefix-tree packing</a><a href="https://github.com/OpenPipe/ART">ART</a><button type="button" data-theme-toggle title="Switch color theme">Dark</button></nav></header>
 <div class="page-layout">
 <aside class="contents"><details class="contents-menu" open><summary>In this article</summary><nav aria-label="Contents">
 <p>In this article</p>
@@ -37,7 +37,7 @@
 <p class="meta">September 2026 &middot; About an hour, plus optional derivations</p>
 <p class="lead">A GPU does not need every token to compute its part of a sequence. It needs the right information about the other tokens. Finding that information, moving it at the right time, and leaving the expensive arithmetic in efficient kernels is the central problem of context parallelism.</p>
 </header>
-<p>I started this project with three hypotheses: context parallelism could move less data than tensor parallelism, hide that communication behind the computation it serves, and lower activation memory per GPU. The especially interesting opportunity was reinforcement learning. A training batch often contains several trajectories with the same long prompt. <a href="../prefix-tree-packing/">Prefix-tree packing</a> lets us compute that prompt once. A larger packed row can then hold more new trajectories, rather than more copies of old context.</p>
+<p>I started this project with three hypotheses: context parallelism could move less data than tensor parallelism, hide that communication behind the computation it serves, and lower activation memory per GPU. The especially interesting opportunity was reinforcement learning. A training batch often contains several trajectories with the same long prompt. <a href="https://github.com/FurtherAI/blog/blob/d1fa0d5600b7f0d04a5bf039d58dd8aab0e9e7c8/posts/prefix-tree-packing/index.html">Prefix-tree packing</a> lets us compute that prompt once. A larger packed row can then hold more new trajectories, rather than more copies of old context.</p>
 <p>The practical results were stronger than a way to make longer sequences fit. On the workloads we measured, context parallelism became a useful throughput axis. Dense attention stayed nearly constant in time as we increased both GPUs and packed tokens. A GLM-5.2 training experiment retained about 95% weak-scaling efficiency when growing from eight to sixteen H200s across two nodes. But these results do not come from one universal distributed kernel. Attention, learned sparse attention, Gated DeltaNet, and Mamba-2 offer different ways to separate their work.</p>
 <p>This article develops those ways from the beginning. We will follow a query, its normalization, and its gradients before introducing a planner. Then we will change the layer and ask what information has to cross a GPU boundary now. The expandable sections carry the detailed derivations; the main text explains why the derivations matter for execution.</p>
 
@@ -260,6 +260,10 @@ dJ/da = -w * (1-w) * dot(g, o)</pre>
 
 selected_ids(i) = top_k visible j by index_score(i,j)</pre>
 <p>The expensive part is not only the final sparse operation. The indexer must inspect the query's visible candidates, score them, and select top-k. Its scoring and selection are separate from the softmax in the main attention. The architecture amortizes this work with <strong>IndexShare</strong>: a full-index layer computes routes and following shared-index layers reuse them. In this configuration the first three layers compute their own indices, followed by repeating groups of one full-index layer and three shared-index layers. Shared layers reuse token choices, not another layer's KV values.</p>
+<h3>Two attention-like operations, two different planning costs</h3>
+<p>The indexer is essentially a smaller attention scoring operation: queries compare against visible keys. Its distributed execution therefore follows the same pattern as dense attention. Keep queries with their owners, bring in candidate keys in stages, compute local query&ndash;key scores, and combine stage results. What is combined differs: the indexer merges top-k candidates rather than softmax outputs and their log-normalizers. It does not compute an attention-weighted sum of values.</p>
+<p>The subsequent sparse MLA has a different work shape. Once a query has at least k visible candidates, it attends to k selected keys whether its tree path contains 5,000 or 50,000 tokens. Its main attention work is approximately fixed per query, rather than proportional to the visible area of the prefix tree. Queries with fewer than k eligible keys are the exception. The indexer still pays to score the eligible candidates; selecting a fixed number does not make that search fixed-cost.</p>
+<p>A planner must account for both terms: candidate-scoring work on full-index layers, and selected-key attention work on every layer. Balancing only visible query&ndash;key area can leave the sparse operation unbalanced, because equal areas can contain very different numbers of queries. Nor can we reuse dense attention's stage splits unchanged for the sparse operation: the selected keys can be distributed very unevenly among those stages. ART retains the staged search, but assembles the selected address space for the main sparse kernel, as described below.</p>
 <pre class="equation">hidden tokens
   -> Q / compressed-KV projections
   -> full layer: score candidates and choose token IDs
@@ -303,13 +307,16 @@ sum_j p_ij v_j = sum_j p_ij W_V c_j
 <p>The positional contribution is retained separately. With an additional rotary query/key pair, the score is a sum of a latent dot product and a positional dot product. Concatenating the transformed latent query with the rotary query, and c_j with the rotary key, lets the kernel compute that sum as one dot product. The model's scale factor still follows its intended score convention, not an arbitrary rescaling based on the new stored width.</p>
 <p>The sparse index list only restricts which j participate. It does not change either linear identity, so the same absorbed representation works across a prefix-tree CP stage layout. Backward differentiates the latent attention, query transform, and value expansion, while the selected-token routing follows the architecture's indexer contract.</p>
 </div></details>
-<p class="source">Implementation evidence: <a href="https://github.com/OpenPipe/ART/commit/f4058260">combined-KV execution</a>, <a href="https://github.com/OpenPipe/ART/commit/979b02de">dynamic grouped indexer and dKV work</a>; architecture and runtime at the <a href="https://github.com/OpenPipe/ART/tree/e932bff638d9efe46db73ace334656181c302544/src/art/megatron/glm52">GLM source snapshot</a>.</p>
+<p class="source">Implementation evidence: <a href="https://github.com/OpenPipe/ART/commit/f4058260bc79acbd0d9c65f959e73ebe13f215d2">combined-KV execution</a>, <a href="https://github.com/OpenPipe/ART/commit/979b02de2e1534125e244c97afb703b55ab86529">dynamic grouped indexer and dKV work</a>; architecture and runtime at the <a href="https://github.com/OpenPipe/ART/tree/e932bff638d9efe46db73ace334656181c302544/src/art/megatron/glm52">GLM source snapshot</a>.</p>
 </section>
 <section id="gdn">
 <p class="section-number">08 / Change what represents the past</p>
-<h2>Gated DeltaNet: a recurrence need not become a rank pipeline</h2>
+<h2>Gated DeltaNet context parallelism</h2>
 <p class="section-answer">A token shard can compute its effect on an unknown incoming state. These effects compose, letting ranks do most of their local work concurrently.</p>
+<p>So far, every distributed operation has let a query inspect individual keys, either all visible keys or a learned subset. GDN changes that interface. There is no list of past KV rows to fetch and no softmax output to merge. Instead, each token reads and updates a fixed-size state. To distribute this layer, we need to understand what information crosses a token-shard boundary and how to compute it without serializing the ranks.</p>
 <p>Qwen3.5 mixes ordinary attention with <strong>Gated DeltaNet (GDN)</strong> layers. An attention layer keeps access to individual past keys and values. GDN compresses the past into a finite matrix state. That makes its token-dependent work linear in sequence length for fixed model dimensions, but a literal reading of its recurrence appears to introduce a sequential dependency at every token.</p>
+<p>We will separate three problems: how the single-GPU kernel avoids a token-by-token loop, how its state transformations compose across GPUs, and how the prefix tree lets independent branches share an initial state without sharing their subsequent updates. The short convolution around the recurrence has a separate, much smaller boundary dependency. Together these give us a distributed GDN layer, not an attention algorithm applied to a different kernel.</p>
+<h3>What a GDN token does to the state</h3>
 <p>For one head, write the state S as a d_k by d_v matrix. A key k selects a direction in its key dimension, and k-transpose times S reads the value currently associated with that direction. Each new token has a query q, a key k, a value v, a decay alpha, and a write strength beta. First decay the old state, then correct its prediction of v in the direction k:</p>
 <pre class="equation">S_pre = alpha * S_previous
 delta = beta * (v - S_pre^T k)
@@ -430,7 +437,7 @@ send each token owner's rows back, then concatenate head slices</pre>
 <p>For the scalar-decay state equation, unrolling a chunk gives a weighted sum of writes with weights equal to products of intervening a_t. SSD exploits the structure of this matrix instead of forming a general dense sequence-by-sequence attention matrix. ART does not need to invent another SSD realization to use CP; it supplies full token order for a head shard and the correct tree boundary states to the established kernel.</p>
 <p>The z gate has no role in that recurrence, so transporting it would add bytes without enabling any earlier compute. This is an example of choosing the communication boundary from actual data dependencies rather than indiscriminately exchanging either all hidden activations or every projected channel.</p>
 </div></details>
-<p class="source">Qualified source: <a href="https://github.com/OpenPipe/ART/tree/4013796f96/src/art/megatron/mamba">Nemotron tree operator and exchanges</a>, <a href="https://github.com/OpenPipe/ART/pull/819">implementation and validation PR</a>.</p>
+<p class="source">Qualified source: <a href="https://github.com/OpenPipe/ART/tree/4013796f9695f63bf4c8db8ceee759ae4fe0306c/src/art/megatron/mamba">Nemotron tree operator and exchanges</a>, <a href="https://github.com/OpenPipe/ART/pull/819">implementation and validation PR</a>.</p>
 </section>
 <section id="memory">
 <p class="section-number">10 / Account for the whole rank</p>
@@ -572,7 +579,7 @@ weak-scaling efficiency = time_at_base / time_at_N
 </div></details>
 </section>
 </article>
-<footer><a href="../prefix-tree-packing/">Previous: Prefix-tree packing</a><span>FurtherAI / ART</span></footer>
+<footer><a href="https://github.com/FurtherAI/blog/blob/d1fa0d5600b7f0d04a5bf039d58dd8aab0e9e7c8/posts/prefix-tree-packing/index.html">Previous: Prefix-tree packing</a><span>FurtherAI / ART</span></footer>
 </main></div>
 <script src="figures.js?v=20260909"></script>
 <script>
