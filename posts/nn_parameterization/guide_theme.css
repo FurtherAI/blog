@@ -4,7 +4,7 @@
 body{background:var(--bg);color:var(--ink)}
 .guide_page main{background:var(--paper)}
 .guide_page header{background:var(--panel)}
-.guide_page .toc,.guide_page .callout,.guide_page .card,.guide_page .lab,.guide_page .equation,.guide_page pre,.guide_page .proof,.guide_page details,.guide_page .guide-content .section-intro{background:var(--panel)}
+.guide_page .verdict,.guide_page .optimizer-lens,.guide_page .rule-formula,.guide_page .equation-note-code,.guide_page .toc,.guide_page .callout,.guide_page .card,.guide_page .lab,.guide_page .equation,.guide_page pre,.guide_page .proof,.guide_page details,.guide_page .guide-content .section-intro{background:var(--panel)}
 .guide_page th{background:var(--panel-soft)}
 .guide_page tbody tr:nth-child(even) td{background:var(--panel)}
 .guide_page a{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
