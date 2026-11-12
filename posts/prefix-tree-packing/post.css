@@ -1,3 +1,5 @@
+:root{--content-width:56rem;--wide-width:72rem}
+@media(max-width:74rem){figure.wide{margin-left:0;margin-right:0}}
 /* Post-specific styles: prefix-tree-packing */
 
 .byline {
@@ -445,3 +447,9 @@ table.data-table thead th {
   color: var(--text-muted);
   margin-top: 0.75rem;
 }
+
+/* Keep wide diagrams and tables scrollable within the article on phones. */
+.tree-figure,.bench-figure{overflow-x:auto}
+@media(max-width:40rem){.tree-figure{display:block}.tree-figure>*{min-width:32rem;margin-bottom:1.6rem}.bin-demo-controls{flex-wrap:wrap}}
+
+.table_scroll{overflow-x:auto}

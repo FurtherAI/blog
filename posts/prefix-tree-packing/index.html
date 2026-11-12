@@ -21,13 +21,14 @@
       float: right;
     }
   </style>
+<link rel="stylesheet" href="../../assets/css/navigation.css">
 </head>
 <body>
   <div class="wrap">
     <header class="site">
       <button data-theme-toggle aria-label="Toggle dark mode">Dark</button>
       <a class="brand" href="../../">FurtherAI</a>
-      <nav><a href="https://github.com/FurtherAI" target="_blank" rel="noopener">GitHub</a></nav>
+      <nav style="display:flex;gap:20px;align-items:center"><a href="../../">Home</a><details class="blog_posts"><summary>Posts</summary><nav class="post_menu" aria-label="Blog posts"><a href="../nn_parameterization/">Neural network parameterization</a><a href="../context-parallelism/">Context parallelism in ART</a><a href="../prefix-tree-packing/" aria-current="page">Prefix tree packing in ART</a></nav></details></nav>
     </header>
 
     <h1>Prefix Tree Packing in ART</h1>
@@ -461,7 +462,7 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
     <figure class="card bench-figure">
       <h5>Rows needed to pack 32 variable-length agent rollouts into 131,072-token rows</h5>
 
-      <table class="data-table">
+      <div class="table_scroll"><table class="data-table">
         <thead>
           <tr><th>arrival order</th><th>group-specific prefix</th><th>completion length</th><th>rollouts</th></tr>
         </thead>
@@ -471,7 +472,7 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
           <tr><td>3. long</td><td>12,000</td><td>12,000</td><td>8</td></tr>
           <tr><td>4. medium</td><td>12,000</td><td>7,000</td><td>8</td></tr>
         </tbody>
-      </table>
+      </table></div>
       <p class="note">
         Each row also pays for the 4,096-token system/tool root once. Prefix and
         completion lengths exclude that common root. For next-token loss alignment,
@@ -491,7 +492,7 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
         </div>
       </div>
 
-      <table class="data-table">
+      <div class="table_scroll"><table class="data-table">
         <thead>
           <tr><th>placement</th><th>row contents</th><th>used tokens</th></tr>
         </thead>
@@ -502,7 +503,7 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
           <tr><td>global row 1</td><td>long + 3 short A</td><td>130,105 / 131,072</td></tr>
           <tr><td>global row 2</td><td>medium + 5 short A + short B</td><td>122,114 / 131,072</td></tr>
         </tbody>
-      </table>
+      </table></div>
       <p class="note">
         The original packer permanently moved on whenever the next rollout did not
         fit, so the last medium rollout stranded almost an entire row. Global
@@ -522,7 +523,7 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
       bin-packing search each scale as the number of leaves grows:
     </p>
 
-    <table class="data-table">
+    <div class="table_scroll"><table class="data-table">
       <thead>
         <tr><th>groups</th><th>completions</th><th>tree walk</th><th>bin packing</th><th>rows</th></tr>
       </thead>
@@ -532,7 +533,7 @@ for depth, bucket in enumerate(tree_segment_buckets_by_depth):
         <tr><td>192</td><td>1,668</td><td>42.0 ms</td><td>48.7 ms</td><td>227</td></tr>
         <tr><td>768</td><td>6,686</td><td>291.2 ms</td><td>743.5 ms</td><td>918</td></tr>
       </tbody>
-    </table>
+    </table></div>
     <p class="note">
       The tree walk stays close to linear. The bin-packing pass doesn't &mdash; its
       best-fit search checks every open bin for every leaf, so cost grows closer to

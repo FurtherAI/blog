@@ -9,10 +9,11 @@
 <script src="../../assets/js/theme.js"></script>
 <link rel="stylesheet" href="post.css?v=20260909b">
 <link rel="stylesheet" href="figures.css?v=20260909b">
+<link rel="stylesheet" href="../../assets/css/navigation.css">
 </head>
 <body>
 <a class="skip-link" href="#article">Skip to article</a>
-<header class="site-header"><a href="https://github.com/FurtherAI" class="brand">FurtherAI</a><nav aria-label="Site"><a href="https://github.com/FurtherAI/blog/blob/d1fa0d5600b7f0d04a5bf039d58dd8aab0e9e7c8/posts/prefix-tree-packing/index.html">Prefix-tree packing</a><a href="https://github.com/OpenPipe/ART">ART</a><button type="button" data-theme-toggle title="Switch color theme">Dark</button></nav></header>
+<header class="site-header"><a href="../../" class="brand">FurtherAI</a><nav aria-label="Site"><a href="../../">Home</a><details class="blog_posts"><summary>Posts</summary><nav class="post_menu" aria-label="Blog posts"><a href="../nn_parameterization/">Neural network parameterization</a><a href="../context-parallelism/" aria-current="page">Context parallelism in ART</a><a href="../prefix-tree-packing/">Prefix tree packing in ART</a></nav></details><button type="button" data-theme-toggle title="Switch color theme">Dark</button></nav></header>
 <div class="page-layout">
 <aside class="contents"><details class="contents-menu" open><summary>In this article</summary><nav aria-label="Contents">
 <p>In this article</p>
@@ -37,7 +38,7 @@
 <p class="meta">September 2026 &middot; About an hour, plus optional derivations</p>
 <p class="lead">A GPU does not need every token to compute its part of a sequence. It needs the right information about the other tokens. Finding that information, moving it at the right time, and leaving the expensive arithmetic in efficient kernels is the central problem of context parallelism.</p>
 </header>
-<p>I started this project with three hypotheses: context parallelism could move less data than tensor parallelism, hide that communication behind the computation it serves, and lower activation memory per GPU. The especially interesting opportunity was reinforcement learning. A training batch often contains several trajectories with the same long prompt. <a href="https://github.com/FurtherAI/blog/blob/d1fa0d5600b7f0d04a5bf039d58dd8aab0e9e7c8/posts/prefix-tree-packing/index.html">Prefix-tree packing</a> lets us compute that prompt once. A larger packed row can then hold more new trajectories, rather than more copies of old context.</p>
+<p>I started this project with three hypotheses: context parallelism could move less data than tensor parallelism, hide that communication behind the computation it serves, and lower activation memory per GPU. The especially interesting opportunity was reinforcement learning. A training batch often contains several trajectories with the same long prompt. <a href="../prefix-tree-packing/">Prefix-tree packing</a> lets us compute that prompt once. A larger packed row can then hold more new trajectories, rather than more copies of old context.</p>
 <p>The practical results were stronger than a way to make longer sequences fit. On the workloads we measured, context parallelism became a useful throughput axis. Dense attention stayed nearly constant in time as we increased both GPUs and packed tokens. A GLM-5.2 training experiment retained about 95% weak-scaling efficiency when growing from eight to sixteen H200s across two nodes. But these results do not come from one universal distributed kernel. Attention, learned sparse attention, Gated DeltaNet, and Mamba-2 offer different ways to separate their work.</p>
 <p>This article develops those ways from the beginning. We will follow a query, its normalization, and its gradients before introducing a planner. Then we will change the layer and ask what information has to cross a GPU boundary now. The expandable sections carry the detailed derivations; the main text explains why the derivations matter for execution.</p>
 
@@ -579,7 +580,7 @@ weak-scaling efficiency = time_at_base / time_at_N
 </div></details>
 </section>
 </article>
-<footer><a href="https://github.com/FurtherAI/blog/blob/d1fa0d5600b7f0d04a5bf039d58dd8aab0e9e7c8/posts/prefix-tree-packing/index.html">Previous: Prefix-tree packing</a><span>FurtherAI / ART</span></footer>
+<footer><a href="../prefix-tree-packing/">Previous: Prefix-tree packing</a><span>FurtherAI / ART</span></footer>
 </main></div>
 <script src="figures.js?v=20260909"></script>
 <script>
