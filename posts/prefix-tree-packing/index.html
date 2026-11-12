@@ -8,28 +8,13 @@
   <script src="../../assets/js/theme.js"></script>
   <link rel="stylesheet" href="../../assets/css/base.css" />
   <link rel="stylesheet" href="post.css?v=20261112-wide" />
-  <style>
-    button[data-theme-toggle] {
-      font-family: var(--sans);
-      font-size: 0.8rem;
-      background: none;
-      border: 1px solid var(--hairline);
-      border-radius: 6px;
-      color: var(--text-secondary);
-      padding: 0.3rem 0.6rem;
-      cursor: pointer;
-      float: right;
-    }
-  </style>
-<link rel="stylesheet" href="../../assets/css/navigation.css">
+
+<link rel="stylesheet" href="../../assets/css/navigation.css?v=20261112-header">
 </head>
 <body>
-  <div class="wrap">
-    <header class="site">
-      <button data-theme-toggle aria-label="Toggle dark mode">Dark</button>
-      <a class="brand" href="../../">FurtherAI</a>
-      <nav style="display:flex;gap:20px;align-items:center"><a href="../../">Home</a><details class="blog_posts"><summary>Posts</summary><nav class="post_menu" aria-label="Blog posts"><a href="../nn_parameterization/">Neural network parameterization</a><a href="../context-parallelism/">Context parallelism in ART</a><a href="../prefix-tree-packing/" aria-current="page">Prefix tree packing in ART</a></nav></details></nav>
-    </header>
+<header class="blog_header"><div class="blog_header_inner"><a class="blog_brand" href="../../" aria-label="FurtherAI home">FurtherAI</a><nav class="blog_nav" aria-label="Site"><a href="../../">Home</a><details class="blog_posts"><summary>Posts</summary><nav class="post_menu" aria-label="Blog posts"><a href="../../posts/nn_parameterization/">Neural network parameterization</a><a href="../../posts/context-parallelism/">Context parallelism in ART</a><a href="../../posts/prefix-tree-packing/" aria-current="page">Prefix tree packing in ART</a></nav></details><button class="blog_theme" type="button" data-theme-toggle aria-label="Toggle color theme">Dark</button></nav></div></header>
+  <div class="wrap" style="padding-top:40px">
+
 
     <h1>Prefix Tree Packing in ART</h1>
     <p class="byline">August 2026 &middot; ART / Megatron</p>
@@ -70,14 +55,14 @@
 
     <p>
       That's the shape of it, simplified from ART's actual walk in
-      <code>prefix_tree_packing.py</code>. Two refinements matter in practice. 
+      <code>prefix_tree_packing.py</code>. Two refinements matter in practice.
       <br>
       First, a
       configurable minimum shared-segment length (64 tokens by default) keeps the tree
       from paying attention-kernel and bookkeeping overhead to share a handful of
-      tokens. 
+      tokens.
       <br>
-      Second, sharing currently excludes trainable tokens for simplicity of loss computation. Trainable tokens likely have different advantages and the advantage tensor is the same length as the token ids tensor (matching to their respective tokens), so you can't overlap trainable tokens without changing how this is handled. I have an idea for generalizing the losses/algorithms in ART and how to support prefix tree packing on that which will replace this and probably allow sharing trainable tokens, which I'll get to in the next month or so. 
+      Second, sharing currently excludes trainable tokens for simplicity of loss computation. Trainable tokens likely have different advantages and the advantage tensor is the same length as the token ids tensor (matching to their respective tokens), so you can't overlap trainable tokens without changing how this is handled. I have an idea for generalizing the losses/algorithms in ART and how to support prefix tree packing on that which will replace this and probably allow sharing trainable tokens, which I'll get to in the next month or so.
       <br>
       Finally, an off-by-one note, each branch keeps one duplicated, non-trainable context
       token right at its join point, so it still gets its own next-token query
