@@ -1,0 +1,1566 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>AdamW and the Spectral Condition: Audit and Re-derivation</title>
+<style>
+    :root {
+      --bg: #090d13;
+      --paper: #131b24;
+      --soft: #192531;
+      --ink: #e7eef6;
+      --muted: #a9b7c5;
+      --line: #354554;
+      --blue: #78baff;
+      --green: #79d79e;
+      --amber: #f3c76c;
+      --red: #ff938a;
+      --violet: #c5afff;
+      --teal: #6ed8d0;
+      --shadow: 0 10px 28px rgba(0, 0, 0, .24);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font: 16px/1.58 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      max-width: 1160px;
+      min-height: 100vh;
+      margin: 0 auto;
+      background: var(--paper);
+      box-shadow: 0 0 0 1px rgba(148, 163, 184, .15), 0 20px 52px rgba(0, 0, 0, .34);
+    }
+    header {
+      padding: 58px 58px 30px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(135deg, #162332, #131b24 60%);
+    }
+    article { padding: 32px 58px 68px; }
+    h1 {
+      max-width: 980px;
+      margin: 0 0 14px;
+      font-size: clamp(36px, 5vw, 58px);
+      line-height: 1.03;
+      letter-spacing: -.025em;
+    }
+    h2 {
+      margin: 50px 0 15px;
+      padding-top: 28px;
+      border-top: 1px solid var(--line);
+      font-size: 29px;
+      line-height: 1.18;
+    }
+    h3 { margin: 30px 0 9px; font-size: 21px; line-height: 1.25; }
+    h4 { margin: 22px 0 7px; font-size: 17px; line-height: 1.3; }
+    p { margin: 10px 0; }
+    a { color: var(--blue); }
+    code, .math {
+      padding: .06em .3em;
+      border: 1px solid #3b4d5e;
+      border-radius: 4px;
+      background: #111a23;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .94em;
+    }
+    .subtitle {
+      max-width: 930px;
+      color: var(--muted);
+      font-size: 19px;
+      line-height: 1.48;
+    }
+    .meta { margin-top: 21px; color: var(--muted); font-size: 14px; }
+    .toc {
+      margin: 25px 0 10px;
+      padding: 17px 19px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--soft);
+      box-shadow: var(--shadow);
+    }
+    .toc strong { display: block; margin-bottom: 8px; }
+    .toc ol { margin: 0; padding-left: 22px; columns: 2; column-gap: 36px; }
+    .toc li { margin: 4px 0; break-inside: avoid; }
+    .callout {
+      margin: 18px 0;
+      padding: 14px 17px;
+      border: 1px solid var(--line);
+      border-left-width: 5px;
+      border-radius: 8px;
+      background: #151f29;
+      box-shadow: var(--shadow);
+    }
+    .callout strong:first-child { display: block; margin-bottom: 4px; }
+    .claim { border-left-color: var(--green); }
+    .warning { border-left-color: var(--amber); }
+    .error { border-left-color: var(--red); }
+    .scope { border-left-color: var(--violet); }
+    .definition { border-left-color: var(--teal); }
+    .equation {
+      margin: 14px 0;
+      padding: 13px 15px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #101922;
+      font: 15px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre;
+    }
+    .equation.wrap {
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+    .derivation {
+      margin: 18px 0;
+      padding: 17px 18px;
+      border: 1px solid #405364;
+      border-radius: 9px;
+      background: #111b25;
+    }
+    .derivation h3, .derivation h4 { margin-top: 0; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin: 18px 0;
+    }
+    .card {
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #151f29;
+      box-shadow: var(--shadow);
+    }
+    .card h3, .card h4 { margin-top: 0; }
+    table {
+      width: 100%;
+      margin: 18px 0;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+    th { background: #1d2a36; font-weight: 680; }
+    tbody tr:nth-child(even) td { background: #16212b; }
+    .bad { color: var(--red); font-weight: 680; }
+    .partial { color: var(--amber); font-weight: 680; }
+    .good { color: var(--green); font-weight: 680; }
+    .small { color: var(--muted); font-size: 14px; }
+    .tight li { margin: 5px 0; }
+    .chain {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      align-items: center;
+      gap: 9px;
+      margin: 20px 0;
+    }
+    .chain .node {
+      min-height: 92px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #172430;
+    }
+    .arrow { color: var(--blue); font-size: 24px; }
+    figure {
+      margin: 24px 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #141f29;
+      box-shadow: var(--shadow);
+    }
+    figcaption { margin-top: 10px; color: var(--muted); font-size: 14px; }
+    svg { display: block; width: 100%; height: auto; }
+    .verdict {
+      padding: 18px;
+      border: 1px solid #526575;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #182633, #151f29);
+      font-size: 18px;
+    }
+    @media (max-width: 780px) {
+      header { padding: 36px 22px 23px; }
+      article { padding: 24px 22px 50px; }
+      .toc ol { columns: 1; }
+      .grid { grid-template-columns: 1fr; }
+      .chain { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); text-align: center; }
+      table { font-size: 13px; }
+      th, td { padding: 7px; }
+    }
+  </style>
+<style>p, li, td, th { overflow-wrap:anywhere; }</style></head>
+<body>
+<main>
+<header>
+<h1>AdamW and the spectral condition</h1>
+<div class="subtitle">
+      A source-grounded audit of <code>candidate A: alignment argument</code> and
+      <code>candidate B: parameterization argument</code>, followed by an independent
+      elementary re-derivation. The objective is not to rescue either draft, but
+      to expose exactly which quantities control feature motion.
+    </div>
+<div class="meta">Source basis: Yang, Simon &amp; Bernstein, A Spectral Condition for
+      Feature Learning, paper version 2 • audited 2026-07-29 • rectangular
+      backward and epsilon analysis revised 2026-08-08</div>
+</header>
+<article>
+<nav class="toc">
+<strong>Contents</strong>
+<ol>
+<li><a href="#executive">Executive verdict</a></li>
+<li><a href="#paper">What the paper establishes</a></li>
+<li><a href="#three">Three separate questions</a></li>
+<li><a href="#audit-alignment">Audit: alignment draft</a></li>
+<li><a href="#audit-param">Audit: parametrization draft</a></li>
+<li><a href="#derive">Independent derivation</a></li>
+<li><a href="#first-step">Exact first Adam step</a></li>
+<li><a href="#history">Multiple steps and batches</a></li>
+<li><a href="#reproductions">Reproductions and observed behavior</a></li>
+<li><a href="#epsilon">Rectangular gradient bound and epsilon regimes</a></li>
+<li><a href="#adamw">AdamW weight decay</a></li>
+<li><a href="#limits">Claim boundaries</a></li>
+<li><a href="#tests">What to measure</a></li>
+</ol>
+</nav>
+<section id="executive">
+<h2>1. Executive verdict</h2>
+<div class="verdict">
+        The two drafts disagree because they conflate different geometric
+        questions. The claim that Adam inherits the SGD learning rate
+        <code>ηₗ = Θ(d_out / d_in)</code> is unsupported and, in the ordinary
+        sign-normalized low-stable-rank regime, wrong. The second draft's
+        <code>ηₗ = Θ(1 / d_in)</code> is the correct special case, but only after
+        adding three missing assumptions: the preconditioned update has
+        nonvanishing RMS entries, width-independent stable rank, and the
+        optimizer remains in an epsilon-insignificant or controlled mixed
+        state. AdamW then adds a second, independently scaled update whose
+        per-step strength is <code>ηₗ λₗ</code>.
+      </div>
+<div class="grid">
+<div class="card">
+<h3>What survives</h3>
+<ul class="tight">
+<li>The first-step, batch-one, negligible-epsilon Adam update is a
+              sign outer product.</li>
+<li>Its action alignment with a dense Gaussian activation tends to
+              <code>√(2/π)</code>.</li>
+<li>Its spectral norm is <code>√(d_out d_in)</code>, so the spectral
+              condition asks for <code>η = 1/d_in</code>.</li>
+</ul>
+</div>
+<div class="card">
+<h3>What must be replaced</h3>
+<ul class="tight">
+<li>Random square matrices do <em>not</em> have vanishing action
+              alignment.</li>
+<li>Adam's later update is not generally rank one, even when every
+              individual gradient is rank one.</li>
+<li>Low stable rank does not imply alignment with the current
+              activation.</li>
+<li>Inner-product alignment with the gradient does not determine
+              Adam's learning rate.</li>
+</ul>
+</div>
+</div>
+
+<div class="callout claim">
+<strong>The corrected matrix learning-rate formula</strong>
+        Let <code>Pₜ = m̂ₜ / (√v̂ₜ + ε)</code>, let
+        <code>qₜ = ‖Pₜ‖²_F / (d_out d_in)</code> be its mean squared entry, and
+        let <code>rₜ = ‖Pₜ‖²_F / ‖Pₜ‖²_*</code> be its stable rank. Directly
+        imposing the spectral condition gives
+        <code>ηₗ = Θ(√(rₜ/qₜ) / d_in)</code>. The familiar Adam rule
+        <code>1/d_in</code> is the case <code>qₜ = Θ(1)</code> and
+        <code>rₜ = Θ(1)</code>. For raw weight coordinates, a clean rectangular
+        backpropagation bound gives
+        <code>RMS(√v̂ₜ)=O(1/d_out)</code>. If the normalized bulk
+        <code>d_out√v̂ₜ</code> also stays bounded away from zero, then
+        <code>ε=c/d_out</code> preserves a width-independent epsilon margin;
+        <code>ε=o(1/d_out)</code> makes epsilon asymptotically negligible.
+        The upper bound alone cannot supply that noncollapse condition.
+      </div>
+</section>
+<section id="paper">
+<h2>2. What the original paper actually establishes</h2>
+<p>An elementary re-derivation of AdamW feature motion, with two candidate arguments audited along the way: transferring the SGD learning rate directly, and deriving the Adam rate from its normalized update. The rejected arguments are explained here; no prior drafts are required.</p>
+<div class="equation">‖hₗ‖₂ = Θ(√d_out)       and       ‖Δhₗ‖₂ = Θ(√d_out).</div>
+<p>
+        Its proposed spectral condition assigns the same operator-scale budget
+        to the current weight and to one optimizer update:
+      </p>
+<div class="equation">‖Wₗ‖_* = Θ(√(d_out/d_in))       and       ‖ΔWₗ‖_* = Θ(√(d_out/d_in)).</div>
+<p>
+        This norm condition is only an upper-scale budget until the matrix acts
+        strongly on the relevant vector. Define action alignment
+      </p>
+<div class="equation">κ(P, h) = ‖P h‖₂ / (‖P‖_* ‖h‖₂),       0 ≤ κ ≤ 1.</div>
+<p>
+        If <code>κ = Θ(1)</code>, then a spectrally correct update causes a
+        correctly scaled feature change:
+      </p>
+<div class="equation">‖ΔW h‖₂
+= κ(ΔW,h) ‖ΔW‖_* ‖h‖₂
+= Θ(1) · Θ(√(d_out/d_in)) · Θ(√d_in)
+= Θ(√d_out).</div>
+<div class="callout scope">
+<strong>Rigor boundary in the paper</strong>
+        The elementary MLP argument explicitly assumes no asymptotic
+        cancellation, activation-size preservation through nonlinearities,
+        width-independent batch size, and batch-update alignment. Its general
+        adaptive-optimizer claim moves to a tensor-program theorem under
+        representability and pseudo-Lipschitz assumptions, at fixed training
+        time as width grows. An elementary AdamW extension must state
+        replacements for those assumptions; it cannot simply quote the SGD
+        algebra.
+      </div>
+<p>
+        The paper's explicit hyperparameter conversion in the implementation
+        section is for ordinary gradient descent. There,
+        <code>ΔW = -η g</code>, so knowing the gradient norm determines
+        <code>η</code>. Adam breaks exactly that proportionality. The paper
+        says its spectral <em>condition</em> is optimizer-independent; it does
+        not say the raw optimizer learning-rate multiplier is identical for
+        SGD and Adam.
+      </p>
+</section>
+<section id="three">
+<h2>3. Three questions the drafts merge together</h2>
+<div class="chain">
+<div class="node">
+<strong>Update size</strong><br/>
+          What is <code>‖Pₜ‖_*</code>, and what <code>η</code> makes
+          <code>‖ηPₜ‖_* = Θ(√(d_out/d_in))</code>?
+        </div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>Feature action</strong><br/>
+          Is <code>κ(Pₜ,hₜ) = Θ(1)</code>, so the allowed operator norm is
+          actually felt by the current activation?
+        </div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>Loss descent</strong><br/>
+          Is <code>⟨Pₜ,gₜ⟩</code> a nonvanishing fraction of
+          <code>‖Pₜ‖_F ‖gₜ‖_F</code>?
+        </div>
+</div>
+<p>
+        These properties can coexist, but no one of them implies the other two.
+        Stable rank controls the conversion from entry RMS to spectral norm.
+        Action alignment controls feature motion. Gradient inner-product
+        alignment controls the first-order loss response. The Adam learning
+        rate follows from the first property, not the third.
+      </p>
+</section>
+<section id="audit-alignment">
+<h2>4. Audit of <code>candidate A: alignment argument</code></h2>
+<div style="max-width:100%;overflow-x:auto"><table>
+<thead>
+<tr>
+<th>Draft claim</th>
+<th>Verdict</th>
+<th>Correction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lines 35–39: a random matrix has alignment
+              <code>≈ 1/√min(d_in,d_out)</code>.</td>
+<td class="bad">False</td>
+<td>For iid Gaussian <code>M ∈ R^(d_out×d_in)</code> and an
+              independent dense <code>h</code>,
+              <code>κ ≈ √d_out/(√d_out+√d_in)</code>. It is about
+              <code>1/2</code> for square matrices, vanishes only for strongly
+              wide-to-narrow matrices, and approaches one for tall matrices.</td>
+</tr>
+<tr>
+<td>Lines 43–121: first-step Adam becomes a sign outer product with
+              Gaussian action alignment <code>√(2/π)</code>.</td>
+<td class="good">Correct in scope</td>
+<td>Requires batch one, no zero coordinates, bias correction or
+              width-independent moment constants, and negligible
+              <code>ε</code>. <code>√(2/π)</code> is an asymptotic
+              concentration result, not an exact finite-width equality.</td>
+</tr>
+<tr>
+<td>Lines 123–149: repeatedly training one sample keeps the same
+              layer input <code>h</code>.</td>
+<td class="bad">Not a feature-learning model</td>
+<td>The activation entering an internal layer changes as upstream
+              weights learn, even for the same raw example. The calculation is
+              exact only if that activation is frozen, as at the first layer
+              with fixed raw input or in a deliberately frozen upstream
+              network.</td>
+</tr>
+<tr>
+<td>Lines 153–158: the low-rank mixture structure of the first
+              moment explains the later Adam update's singular vectors and
+              alignment decay.</td>
+<td class="bad">Invalid inference</td>
+<td>The first moment really is a sum of rank-one matrices, with
+              rank at most the number of stored gradients. But dividing it
+              entrywise by <code>√v</code> need not preserve that rank or its
+              singular vectors. In the numerical reproduction, eight rank-one
+              gradients produce a 256×256 Adam update of numerical rank 256,
+              although its stable rank remains about four.</td>
+</tr>
+<tr>
+<td>Lines 158–186: diverse samples make current-input alignment
+              decay to <code>o(1)</code>.</td>
+<td class="bad">Unsupported and often false</td>
+<td>The current gradient enters the current moment, and the
+              entrywise denominator can preserve a strong current-input
+              correlation. Alignment is controlled by a conditional
+              correlation stated in §8 below, not by algebraic rank alone.</td>
+</tr>
+<tr>
+<td>Lines 247–254: first-step Adam has order-one Frobenius
+              inner-product alignment with the gradient.</td>
+<td class="good">Correct in scope</td>
+<td>For iid Gaussian row and column factors, it tends to
+              <code>2/π</code>. This is useful for first-order loss descent but
+              is not needed to derive Adam's learning rate.</td>
+</tr>
+<tr>
+<td>Lines 322–327: if gradients lie in a fixed low-dimensional
+              subspace, the coordinatewise normalized vector
+              <code>cₜ</code> remains in it.</td>
+<td class="bad">False</td>
+<td>Coordinatewise nonlinear maps do not preserve arbitrary linear
+              subspaces. Even <code>sign(a)</code> is generally outside
+              <code>span(a)</code>. Low temporal gradient rank is not a valid
+              proof of Adam-update alignment.</td>
+</tr>
+<tr>
+<td>Lines 339–349: once Adam–gradient inner-product alignment is
+              shown, the SGD learning rate <code>d_out/d_in</code> follows.</td>
+<td class="bad">Non sequitur</td>
+<td>That argument may recover the gradient norm. Adam applies an
+              entrywise history-dependent map to the gradient, so its
+              pre-learning-rate spectral norm is not the gradient spectral
+              norm. One must compute or bound <code>‖Pₜ‖_*</code> directly.</td>
+</tr>
+<tr>
+<td>Line 385: epsilon domination recovers SGD-like alignment.</td>
+<td class="partial">Only at the first step</td>
+<td>When <code>ε</code> dominates, <code>Pₜ ≈ m̂ₜ/ε</code>. The
+              direction is the momentum history, not necessarily the current
+              gradient, so alignment need not approach one.</td>
+</tr>
+</tbody>
+</table></div>
+<div class="callout error">
+<strong>Most consequential error</strong>
+        The draft correctly notices that Adam is not proportional to the
+        gradient, then later uses a gradient-norm calculation as if
+        proportionality had been restored. Constant cosine is not
+        proportionality.
+      </div>
+</section>
+<section id="audit-param">
+<h2>5. Audit of <code>candidate B: parameterization argument</code></h2>
+<div style="max-width:100%;overflow-x:auto"><table>
+<thead>
+<tr>
+<th>Draft claim</th>
+<th>Verdict</th>
+<th>Correction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lines 93–116: Adam's later update is rank one for a fixed
+              activation reused at every step.</td>
+<td class="partial">Algebraically correct, structurally narrow</td>
+<td>It assumes the same internal activation at every step. That
+              suppresses the feature learning the paper is meant to analyze.
+              With changing activations or batches, separability is lost.</td>
+</tr>
+<tr>
+<td>Lines 127–134: “typical” backpropagated coordinates
+              <code>aₜ[i] = Θ(1)</code>, hence normalized entries are
+              order one.</td>
+<td class="bad">Wrong premise; unnecessary conclusion</td>
+<td>The paper's scales give
+              <code>‖aₜ‖₂=Θ(1/√d_out)</code>, hence dense-coordinate RMS
+              <code>Θ(1/d_out)</code>, not order one. The raw weight-gradient
+              entry RMS is also <code>Θ(1/d_out)</code>. Adam cancels this
+              common scale only when epsilon scales with it or is negligible.
+              Measure both <code>qₜ</code> and epsilon occupancy.</td>
+</tr>
+<tr>
+<td>Lines 134–160: <code>‖Pₜ‖_* = Θ(√(d_out d_in))</code>, hence
+              <code>η = Θ(1/d_in)</code>.</td>
+<td class="good">Correct special case</td>
+<td>The norm conclusion needs both
+              <code>‖Pₜ‖_F = Θ(√(d_out d_in))</code> and stable rank
+              <code>rₜ = Θ(1)</code>. Entry size alone controls the Frobenius
+              norm, not the spectral norm.</td>
+</tr>
+<tr>
+<td>Lines 174–185: Adam always requires a factor
+              <code>d_out</code> smaller learning rate than SGD.</td>
+<td class="partial">True only in the stated matrix regime</td>
+<td>The ratio also depends on Adam update stable rank, entry RMS,
+              epsilon, parameter multipliers, and matrix shape conventions. It
+              is correct for the low-stable-rank, scale-invariant raw-weight
+              setup used in the derivation.</td>
+</tr>
+<tr>
+<td>Implications: standard width-independent Adam learning rates
+              either violate the condition or are explained by epsilon.</td>
+<td class="partial">Incomplete</td>
+<td>Other possibilities include changing stable rank, parameter
+              multipliers, non-asymptotic widths, a different update target, or
+              a training horizon that changes with width. Epsilon is not the
+              only alternative.</td>
+</tr>
+<tr>
+<td>The document extends the result to AdamW.</td>
+<td class="bad">Missing</td>
+<td>Neither draft analyzes decoupled weight decay. AdamW adds
+              <code>-ηλW</code>, whose spectral scale and cumulative shrinkage
+              must be handled separately.</td>
+</tr>
+</tbody>
+</table></div>
+</section>
+<section id="derive">
+<h2>6. Independent optimizer-agnostic derivation</h2>
+<p>
+        Let the layer matrix have shape
+        <code>d_out × d_in</code>. Write an arbitrary optimizer step before its
+        scalar learning rate as <code>Pₜ</code>:
+      </p>
+<div class="equation">ΔW_adapt = -η Pₜ.</div>
+<p>
+        For Adam, <code>Pₜ = m̂ₜ / (√v̂ₜ + ε)</code>, with every operation in
+        the quotient entrywise. Define two directly measurable quantities:
+      </p>
+<div class="equation">qₜ = ‖Pₜ‖²_F / (d_out d_in)          (mean squared entry)
+rₜ = ‖Pₜ‖²_F / ‖Pₜ‖²_*                 (stable rank).</div>
+<div class="derivation">
+<h3>Step A — convert entry RMS and stable rank to spectral norm</h3>
+<div class="equation">‖Pₜ‖_F = √(d_out d_in qₜ)
+
+‖Pₜ‖_* = ‖Pₜ‖_F / √rₜ
+        = √(d_out d_in qₜ / rₜ).</div>
+<p>
+          This is an identity, not a probabilistic approximation. All modeling
+          assumptions are isolated in how <code>qₜ</code> and <code>rₜ</code>
+          scale with width.
+        </p>
+</div>
+<div class="derivation">
+<h3>Step B — impose the spectral update budget directly</h3>
+<div class="equation">η ‖Pₜ‖_* = Θ(√(d_out/d_in))
+
+η √(d_out d_in qₜ / rₜ) = Θ(√(d_out/d_in))
+
+η = Θ( √(rₜ/qₜ) / d_in ).</div>
+</div>
+<div style="max-width:100%;overflow-x:auto"><table>
+<thead>
+<tr>
+<th>Preconditioned update geometry</th>
+<th>Stable rank</th>
+<th>Learning-rate scaling when <code>qₜ=Θ(1)</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>One or finitely many dominant singular modes</td>
+<td><code>rₜ = Θ(1)</code></td>
+<td><code>η = Θ(1/d_in)</code></td>
+</tr>
+<tr>
+<td>Intermediate effective rank</td>
+<td><code>rₜ = Θ(d_in^γ)</code></td>
+<td><code>η = Θ(d_in^(γ/2 - 1))</code></td>
+</tr>
+<tr>
+<td>Diffuse square random-like matrix</td>
+<td><code>rₜ = Θ(d_in)</code></td>
+<td><code>η = Θ(1/√d_in)</code></td>
+</tr>
+</tbody>
+</table></div>
+<div class="callout definition">
+<strong>Why stable rank is the missing variable</strong>
+        Two matrices can have the same order-one entry RMS while differing by a
+        factor <code>√d_in</code> in spectral norm. A sign outer product
+        concentrates all Frobenius energy in one singular value. An iid sign
+        matrix spreads it across order <code>d_in</code> singular directions.
+        Entry size alone cannot choose between <code>1/d_in</code> and
+        <code>1/√d_in</code>.
+      </div>
+<h3>Feature motion is a second condition</h3>
+<p>
+        Define <code>κₜ = κ(Pₜ,hₜ)</code>. Once <code>η</code> satisfies the
+        spectral budget,
+      </p>
+<div class="equation">‖ηPₜ hₜ‖₂
+= κₜ η‖Pₜ‖_* ‖hₜ‖₂
+= κₜ · Θ(√(d_out/d_in)) · Θ(√d_in)
+= Θ(κₜ √d_out).</div>
+<p>
+        Therefore the update learns features at maximal scale precisely when
+        <code>κₜ = Θ(1)</code>. Low stable rank is not enough: the dominant
+        right singular space could be orthogonal to <code>hₜ</code>.
+      </p>
+</section>
+<section id="first-step">
+<h2>7. Exact first-step Adam calculation</h2>
+<p>
+        For batch one at one layer, write the gradient as
+        <code>g = a hᵀ</code>. After bias correction,
+        <code>m̂ = g</code> and <code>v̂ = g⊙g</code>. If
+        <code>ε = 0</code> and no coordinate product vanishes,
+      </p>
+<div class="equation">Pᵢⱼ = gᵢⱼ / |gᵢⱼ|
+     = sign(aᵢ) sign(hⱼ),
+
+P = sign(a) sign(h)ᵀ.</div>
+<p>
+        It follows exactly that <code>r=1</code>, <code>q=1</code>, and
+        <code>‖P‖_* = √(d_out d_in)</code>. Thus
+      </p>
+<div class="equation">η = Θ(1/d_in).</div>
+<p>The action alignment is also exact at finite width:</p>
+<div class="equation">κ(P,h) = ‖h‖₁ / (√d_in ‖h‖₂).</div>
+<p>
+        If the coordinates of <code>h</code> are iid with
+        <code>E|H| = μ₁</code> and <code>E[H²] = μ₂ ∈ (0,∞)</code>, the law of
+        large numbers gives
+      </p>
+<div class="equation">κ(P,h) → μ₁ / √μ₂.</div>
+<div style="max-width:100%;overflow-x:auto"><table>
+<thead>
+<tr><th>Activation coordinates</th><th>Asymptotic action alignment</th><th>Interpretation</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>Gaussian <code>N(0,σ²)</code></td>
+<td><code>√(2/π) ≈ 0.798</code></td>
+<td>Dense sign structure gives constant alignment.</td>
+</tr>
+<tr>
+<td>ReLU of a standard Gaussian</td>
+<td><code>1/√π ≈ 0.564</code></td>
+<td>The zero half reduces but does not destroy alignment.</td>
+</tr>
+<tr>
+<td>Fraction <code>p</code> nonzero, equal magnitude</td>
+<td><code>√p</code></td>
+<td>If <code>p=Θ(1)</code>, alignment remains constant; if
+              <code>p→0</code>, it vanishes.</td>
+</tr>
+<tr>
+<td>One coordinate carries nearly all norm</td>
+<td><code>≈ 1/√d_in</code></td>
+<td>Spiky features defeat the sign-alignment argument.</td>
+</tr>
+</tbody>
+</table></div>
+<h3>Gradient inner-product alignment, kept in its proper role</h3>
+<div class="equation">⟨P,g⟩ / (‖P‖_F ‖g‖_F)
+= [‖a‖₁/(√d_out ‖a‖₂)] · [‖h‖₁/(√d_in ‖h‖₂)].</div>
+<p>
+        For dense iid Gaussian factors this tends to <code>2/π</code>. This
+        supports a first-order descent calculation. It does not alter the
+        learning-rate derivation, which already followed from
+        <code>‖P‖_*</code>.
+      </p>
+</section>
+<section id="history">
+<h2>8. Multiple steps, multiple examples, and why full rank is compatible with low stable rank</h2>
+<h3>First define the objects locally</h3>
+<p>
+        Consider one batch-one training step <code>s</code> at a linear map
+        <code>zₛ = W hₛ</code>. Here
+      </p>
+<div class="equation">hₛ ∈ R^d_in
+aₛ = ∇_(zₛ) Lₛ ∈ R^d_out
+gₛ = aₛ hₛᵀ ∈ R^(d_out × d_in).</div>
+<p>
+        Your interpretation is therefore right about <code>aₛ</code> and
+        <code>hₛ</code>. The one correction is that <code>Aᵢ</code> is not a
+        tuple of whole column vectors. It is the scalar time-history of
+        coordinate <code>i</code> across the column vectors
+        <code>a₁,…,aₜ</code>. Likewise, <code>Hⱼ</code> is the scalar
+        time-history of coordinate <code>j</code> across
+        <code>h₁,…,hₜ</code>:
+      </p>
+<div class="equation">Aᵢ = (a₁[i], a₂[i], …, aₜ[i]) ∈ R^t,     one history for every output row i,
+Hⱼ = (h₁[j], h₂[j], …, hₜ[j]) ∈ R^t,     one history for every input column j.</div>
+<p>
+        Collecting all <code>Aᵢ</code> gives a <code>d_out × t</code> history
+        table; collecting all <code>Hⱼ</code> gives a
+        <code>d_in × t</code> history table.
+      </p>
+<h3>The explicit formula for Qₜ</h3>
+<p>
+        For ordinary Adam with bias correction, the scalar function applied to
+        row history <code>A=(A₁,…,Aₜ)</code> and column history
+        <code>H=(H₁,…,Hₜ)</code> is
+      </p>
+<div class="equation">numerator:
+Nₜ(A,H) = [(1-β₁)/(1-β₁^t)] Σ_(s=1)^t β₁^(t-s) A[s]H[s]
+
+second moment:
+Vₜ(A,H) = [(1-β₂)/(1-β₂^t)] Σ_(s=1)^t β₂^(t-s) A[s]²H[s]²
+
+Adam kernel:
+Qₜ(A,H) = Nₜ(A,H) / [√Vₜ(A,H) + ε].</div>
+<p>Substituting row <code>i</code> and column <code>j</code> gives exactly</p>
+<div class="equation">Pₜ[i,j] = Qₜ(Aᵢ,Hⱼ)
+          = m̂ₜ[i,j] / (√v̂ₜ[i,j] + ε).</div>
+<p class="small">
+        Omitting bias correction only removes the two width-independent
+        prefactors. It does not change the structural argument.
+      </p>
+<h3>Why separate a and h instead of keeping g?</h3>
+<p>
+        For computing one Adam entry, you do not have to separate them. Since
+        <code>gₛ[i,j] = Aᵢ[s]Hⱼ[s]</code>, the scalar history
+        <code>(g₁[i,j],…,gₜ[i,j])</code> is sufficient to compute
+        <code>Pₜ[i,j]</code>. Adam itself stores moment matrices, not
+        <code>Aᵢ</code> and <code>Hⱼ</code>.
+      </p>
+<p>
+        The separation is useful for understanding the <em>whole matrix</em>.
+        It reveals that every entry is obtained by evaluating the same function
+        <code>Qₜ</code> on one row history and one column history. This shared
+        row/column structure is what can concentrate singular energy into a few
+        modes. It also keeps the current activation coordinate
+        <code>hₜ[j]=Hⱼ[t]</code> visible when we analyze
+        <code>Pₜhₜ</code>. A history of product matrices <code>gₛ</code> hides
+        both facts, and <code>gₛ</code> alone does not uniquely recover its two
+        factors because <code>(c aₛ)(hₛ/c)ᵀ = aₛhₛᵀ</code>.
+      </p>
+<div class="callout scope">
+<strong>Analytic re-indexing, not an optimizer implementation</strong>
+<p>
+          We introduce <code>Aᵢ</code> and <code>Hⱼ</code> to expose geometry.
+          The formula above is exact for batch one at each step. For batch size
+          greater than one,
+          <code>gₛ = B⁻¹Σ_b aₛ,b hₛ,bᵀ</code>, so the latent history must also
+          retain the example index or be replaced by the full gradient-entry
+          history.
+        </p>
+</div>
+<p>
+        Because <code>Qₜ</code> contains a square root of a sum followed by an
+        entrywise quotient, it generally does not factor as one row function
+        times one column function. Thus <code>Pₜ</code> is a nonlinear kernel
+        matrix, not a finite sum of the original rank-one gradients.
+      </p>
+<div class="grid">
+<div class="card">
+<h3>Algebraic rank</h3>
+<p>
+            A nonlinear kernel evaluated on distinct row and column histories
+            is generically full rank. Thus “eight past rank-one gradients”
+            does not imply “Adam update rank at most eight.”
+          </p>
+</div>
+<div class="card">
+<h3>Stable rank</h3>
+<p>
+            For fixed <code>t</code>, a regular bounded kernel can often be
+            approximated by a finite sum
+            <code>Σₖ φₖ(Aᵢ)ψₖ(Hⱼ)</code>. Its singular energy can therefore
+            remain concentrated in a width-independent number of modes even
+            while every singular value is technically nonzero.
+          </p>
+</div>
+</div>
+<div class="callout warning">
+<strong>This is a justification, not a universal theorem</strong>
+        The elementary finite-kernel picture needs a fixed training time or
+        fixed effective history, regular moments, a denominator kept away from
+        its singular point, and coordinate distributions that settle as width
+        grows. Stable rank can grow if the history, batch diversity, task
+        complexity, or learned coordinate structure grows with width.
+      </div>
+<h3>The elementary action-alignment condition</h3>
+<p>
+        Fix output row <code>i</code>. Multiplying the Adam update by the
+        current activation adds one contribution from every input coordinate:
+      </p>
+<div class="equation">(Pₜhₜ)[i] = Σ_(j=1)^d_in Xᵢⱼ,
+where Xᵢⱼ = Qₜ(Aᵢ,Hⱼ) hₜ[j] = Qₜ(Aᵢ,Hⱼ) Hⱼ[t].</div>
+<p>
+        Now make the elementary approximation that, after conditioning on row
+        history <code>Aᵢ</code>, the column histories behave like comparable
+        draws from some random history <code>H</code>. Define the mean and
+        variance of one summand:
+      </p>
+<div class="equation">μₜ(Aᵢ) = E[Qₜ(Aᵢ,H) H[t] | Aᵢ],
+σₜ²(Aᵢ) = Var[Qₜ(Aᵢ,H) H[t] | Aᵢ].</div>
+<p>
+        A sum of <code>d_in</code> such terms has mean
+        <code>d_in μₜ(Aᵢ)</code> and standard deviation approximately
+        <code>√d_in σₜ(Aᵢ)</code>:
+      </p>
+<div class="equation">(Pₜhₜ)[i]
+= d_in μₜ(Aᵢ) + O_probability(√d_in σₜ(Aᵢ)).</div>
+<div class="grid">
+<div class="card">
+<h3>Coherent case: μₜ(Aᵢ) is nonzero</h3>
+<p>
+            Each column contribution has a small but systematic signed bias.
+            Adding <code>d_in</code> of them produces an order-<code>d_in</code>
+            result. The random disagreement is only order
+            <code>√d_in</code>, so it becomes relatively negligible.
+          </p>
+<div class="equation">(+0.7) + (+1.1) + (+0.4) + …
+≈ d_in × positive mean.</div>
+</div>
+<div class="card">
+<h3>Cancellation case: μₜ(Aᵢ)=0</h3>
+<p>
+            Positive and negative contributions are balanced. There is no
+            order-<code>d_in</code> mean, so only the random
+            order-<code>√d_in</code> residual remains.
+          </p>
+<div class="equation">(+0.7) + (−1.1) + (+0.4) + …
+≈ zero mean ± √d_in fluctuation.</div>
+</div>
+</div>
+<h3>How this becomes an alignment statement</h3>
+<p>
+        In the low-stable-rank, order-one-entry regime,
+        <code>‖Pₜ‖_* = Θ(√(d_out d_in))</code> and
+        <code>‖hₜ‖₂ = Θ(√d_in)</code>. Their product—the alignment
+        denominator—is therefore <code>Θ(d_in√d_out)</code>.
+      </p>
+<p>
+        If the root-mean-square of <code>μₜ(Aᵢ)</code> across output rows stays
+        nonzero, each output coordinate is order <code>d_in</code> and
+        <code>‖Pₜhₜ‖₂ = Θ(d_in√d_out)</code>. Numerator and denominator match,
+        so <code>κ(Pₜ,hₜ)=Θ(1)</code>. The signs of
+        <code>μₜ(Aᵢ)</code> may differ between rows; the Euclidean norm squares
+        them, so cross-row sign cancellation is irrelevant.
+      </p>
+<p>
+        If every conditional mean is zero, each output coordinate is only order
+        <code>√d_in</code>, giving
+        <code>‖Pₜhₜ‖₂ = Θ(√(d_out d_in))</code>. Dividing by the same
+        <code>Θ(d_in√d_out)</code> denominator gives
+        <code>κ(Pₜ,hₜ)=Θ(1/√d_in)</code>.
+      </p>
+<div class="grid">
+<div class="card">
+<h3>Concrete coherent example: the first step</h3>
+<p>
+            With negligible epsilon,
+            <code>Q₁(A,H)=sign(A[1]H[1])</code>. Therefore
+            <code>Q₁(A,H)H[1]=sign(A[1])|H[1]|</code>, whose conditional mean is
+            <code>sign(A[1])E|H[1]|</code>, not zero. Every column contributes with
+            the row's same sign.
+          </p>
+</div>
+<div class="card">
+<h3>Concrete stale example</h3>
+<p>
+            Suppose <code>Pₜ</code> depends only on past activations and the
+            current <code>hₜ</code> is a fresh symmetric vector independent of
+            that history. Conditional on <code>Pₜ</code>,
+            <code>E[Pₜ[i,j]hₜ[j]]=0</code>. The products cancel and alignment
+            has the <code>1/√d_in</code> scale.
+          </p>
+</div>
+</div>
+<div class="callout claim">
+<strong>What must be checked at later steps</strong>
+        The Adam extension needs two independent empirical/theoretical facts:
+        <code>rₜ = Θ(1)</code> for update size and
+        <code>κ(Pₜ,hₜ)=Θ(1)</code> for feature action. The original drafts
+        substitute informal “low rank” language for both.
+      </div>
+</section>
+<section id="reproductions">
+<h2>9. What the numerical reproductions actually show</h2>
+<p>
+        The script's multiple-step check is a controlled synthetic experiment,
+        not a trained neural network. At each of eight steps it samples independent
+        Gaussian vectors <code>aₛ</code> and <code>hₛ</code>, constructs the
+        exact rank-one gradient <code>gₛ=aₛhₛᵀ</code>, and updates Adam moments
+        with <code>β₁=0.9</code>, <code>β₂=0.999</code>, and
+        <code>ε=0</code>. It omits bias correction because the resulting
+        scalar prefactors do not change rank or alignment. This deliberately
+        isolates the matrix geometry from network dynamics.
+      </p>
+<h3>Observed multiple-step width sweep</h3>
+<div style="max-width:100%;overflow-x:auto"><table>
+<thead>
+<tr>
+<th>Width</th>
+<th>Numerical rank</th>
+<th>Stable rank</th>
+<th>Alignment with current hₜ</th>
+<th>RMS alignment with fresh independent h</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>64</td><td>64</td><td>3.604</td><td>0.842</td><td>0.242</td></tr>
+<tr><td>128</td><td>128</td><td>3.888</td><td>0.889</td><td>0.177</td></tr>
+<tr><td>256</td><td>256</td><td>3.809</td><td>0.940</td><td>0.119</td></tr>
+<tr><td>512</td><td>512</td><td>4.517</td><td>0.956</td><td>0.097</td></tr>
+</tbody>
+</table></div>
+<h3>Reading those results</h3>
+<ol class="tight">
+<li>
+<strong>Adam's later matrix is full algebraic rank.</strong>
+          Numerical rank equals width at every tested size. Entrywise division
+          by <code>√v</code> destroys the literal rank-at-most-eight property of
+          the first moment.
+        </li>
+<li>
+<strong>Its stable rank nevertheless stays near four.</strong>
+          The small singular values make the matrix technically full rank, but
+          a few leading modes still hold most of the squared singular-value
+          energy. This is the precise sense in which “full rank but
+          low-effective-rank” occurs here.
+        </li>
+<li>
+<strong>The update acts strongly on the current activation.</strong>
+          The current <code>hₜ</code> helped form the current gradient and
+          therefore the moment matrices. Its alignment remains order one
+          (0.84–0.96) rather than decaying.
+        </li>
+<li>
+<strong>The same update acts weakly on a fresh independent
+          activation.</strong> Its RMS alignment falls from 0.242 to 0.097.
+          For an isotropic independent vector, the expected squared alignment
+          is approximately <code>rₜ/d_in</code>, so the expected scale is
+          <code>√(rₜ/d_in)</code>. With stable rank near four, that decays like
+          <code>1/√d_in</code>, exactly matching the zero-mean explanation
+          above.
+        </li>
+</ol>
+<h3>Other checks in the script</h3>
+<div style="max-width:100%;overflow-x:auto"><table>
+<thead>
+<tr><th>Check</th><th>Observed result</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>Gaussian random-matrix action</td>
+<td>Measured alignments 0.202, 0.511, 0.832 versus aspect-ratio
+              predictions 0.200, 0.500, 0.800.</td>
+<td>Confirms that random-matrix alignment depends on shape and does
+              not vanish for square or tall matrices.</td>
+</tr>
+<tr>
+<td>First Adam step at width 256</td>
+<td>Measured alignment 0.780229, exactly equal to the finite-vector
+              formula; Gaussian limit 0.797885. Spectral norm exactly 256.</td>
+<td>Checks the sign-outer-product calculation directly.</td>
+</tr>
+<tr>
+<td>Stable-rank learning rate at width 256</td>
+<td>Rank-one update gives <code>η=0.00390625=1/256</code>.
+              Diffuse sign matrix has stable rank about 66 and
+              <code>η≈0.03175</code>.</td>
+<td>Checks the identity <code>η=√r/d_in</code> when entry RMS is
+              one and shows why entry scale alone does not determine η.</td>
+</tr>
+<tr>
+<td>Exact epsilon crossover toy</td>
+<td>For <code>aᵢ=±1/d</code>, <code>hⱼ=±1</code>, the script checks
+              <code>|Pᵢⱼ|=1/(1+εd)</code> and the exact required learning rate
+              <code>η=(1+εd)/d</code>. With fixed <code>ε=10⁻³</code>, η bends
+              from <code>1/d</code> toward <code>10⁻³</code>; with
+              <code>ε∝1/d</code>, it remains proportional to <code>1/d</code>.</td>
+<td>Shows the regime change without random matrices, training
+              assumptions, or a fitted power law.</td>
+</tr>
+<tr>
+<td>AdamW decay arithmetic</td>
+<td>With <code>η=1/256</code>, weight decays 0.1, 256, and 2560 give
+              per-step shrinkage 0.000391, 1, and 10.</td>
+<td>Checks that the operative decay quantity is
+              <code>ηλ</code>.</td>
+</tr>
+</tbody>
+</table></div>
+<div class="callout warning">
+<strong>What this does not establish about real training</strong>
+        Independent Gaussian histories are friendlier than learned,
+        data-correlated histories and omit minibatches, changing feature
+        distributions, epsilon, parameter multipliers, residual paths, and
+        attention structure. The reproduction demonstrates that the proposed
+        mechanisms are internally consistent and that the draft's literal rank
+        argument is false. Establishing actual LLM behavior requires logging
+        <code>qₜ</code>, <code>rₜ</code>, current-activation alignment, fresh
+        or shuffled-activation baselines, epsilon occupancy, and decay ratios
+        across width during training.
+      </div>
+</section>
+<section id="epsilon">
+<h2>10. Rectangular gradient bound and epsilon regimes</h2>
+<div class="callout claim">
+<strong>Short answer</strong>
+        Scaling outside-the-root epsilon as <code>1/d_out</code> is a sensible
+        state-preserving default in raw weight coordinates. The theorem below
+        proves the shape-general ceiling
+        <code>RMS(√v̂ₜ)=O(1/d_out)</code> without square matrices, random
+        initialization, or maximal backward action. To conclude that epsilon
+        is actually insignificant, however, the bulk of
+        <code>d_out√v̂ₜ</code> must also stay away from zero. Under that
+        empirically checkable noncollapse condition,
+        <code>ε=c/d_out</code> preserves a fixed margin and
+        <code>ε=o(1/d_out)</code> makes epsilon disappear. An upper bound alone
+        cannot rule out a smaller or zero gradient.
+      </div>
+<h3>A shape-general upper-bound theorem</h3>
+<p>
+        Consider one example at layer <code>l</code>, with arbitrary rectangular
+        shape. Let
+      </p>
+<div class="equation">Wₗ ∈ R^(dₗ × dₗ₋₁),       zₗ = Wₗhₗ₋₁,
+aₗ = ∂L/∂zₗ,                 Gₗ = ∂L/∂Wₗ = aₗhₗ₋₁ᵀ.
+
+Fₗ₋₁ = ‖hₗ₋₁‖₂/√dₗ₋₁       (normalized forward size),
+Bₗ   = √dₗ ‖aₗ‖₂             (normalized backward size).</div>
+<p>
+        Because <code>Gₗ</code> is rank one, these are exact identities, not
+        independence or typical-coordinate approximations:
+      </p>
+<div class="equation">‖Gₗ‖_* = Fₗ₋₁ Bₗ √(dₗ₋₁/dₗ),
+RMS(Gₗ) = ‖Gₗ‖_F/√(dₗdₗ₋₁) = Fₗ₋₁ Bₗ/dₗ.</div>
+<p>
+        For a chain network, write the activation Jacobian
+        <code>∂hₗ/∂zₗ</code> as <code>Dₗ</code>
+        and define a dimensionless spectral-weight constant and realized
+        backward-action fraction:
+      </p>
+<div class="equation">aₗ = DₗᵀWₗ₊₁ᵀaₗ₊₁,
+
+Cₗ₊₁ = ‖Wₗ₊₁‖_*/√(dₗ₊₁/dₗ),
+Tₗ = ‖DₗᵀWₗ₊₁ᵀaₗ₊₁‖₂ / (‖Wₗ₊₁‖_* ‖aₗ₊₁‖₂),
+
+Bₗ = Cₗ₊₁ Tₗ Bₗ₊₁,          0 ≤ Tₗ ≤ ‖Dₗ‖_*.</div>
+<div class="derivation">
+<h3>Theorem — fixed-depth rectangular gradient ceiling</h3>
+<p>
+          Suppose, uniformly over a width family, that the terminal normalized
+          loss signal satisfies <code>B_L=O(1)</code>, the forward features
+          satisfy <code>Fₗ=O(1)</code>, the weights satisfy the spectral upper
+          condition <code>Cₗ=O(1)</code>, and the activation Jacobians have
+          <code>‖Dₗ‖_*=O(1)</code>. At fixed depth,
+        </p>
+<div class="equation">Bₗ = O(1),
+‖Gₗ‖_* = O(√(dₗ₋₁/dₗ)),
+RMS(Gₗ) = O(1/dₗ).</div>
+<p>
+          Proof: iterate <code>Bₗ≤Cₗ₊₁‖Dₗ‖_*Bₗ₊₁</code> from the output, then
+          substitute into the two exact rank-one identities. For a fixed-size
+          minibatch, the same upper orders follow by the triangle inequality.
+          If the output width grows, <code>B_L=O(1)</code> is a real loss
+          normalization assumption; a fixed-dimensional output with bounded
+          loss derivative satisfies it automatically.
+        </p>
+</div>
+<p>
+        At fixed optimizer time, let the bias-corrected Adam second moment use
+        nonnegative weights <code>wₛ</code> summing to one. The RMS statement
+        propagates exactly through the elementwise squares:
+      </p>
+<div class="equation">RMS(√v̂ₜ)²
+= (1/(d_out d_in)) Σᵢⱼ v̂ₜ[i,j]
+= Σₛ wₛ RMS(Gₛ)²
+= O(1/d_out²).
+
+Therefore RMS(√v̂ₜ) = O(1/d_out).</div>
+<p>
+        Temporal sign cancellation is absent here because Adam squares before
+        averaging. Minibatch examples can still cancel inside <code>Gₛ</code>
+        before the square, which only makes the upper bound easier to satisfy.
+      </p>
+<div class="callout warning">
+<strong>Why this is only a ceiling</strong>
+        The spectral condition controls the largest action, not the action on
+        the backpropagated vector. For example,
+        <code>W=[√2,0]ᵀ∈R^(2×1)</code> has exactly the target norm
+        <code>√(2/1)</code>, but <code>Wᵀ[0,1]ᵀ=0</code>. Thus the backward
+        signal, gradient, and second moment can collapse while every spectral
+        upper condition holds. A matching <code>Θ</code> result needs the
+        additional backward-noncollapse condition <code>Bₗ=Ω(1)</code>, which
+        we call <em>backward faithfulness</em> here. Equivalently, at fixed depth
+        it follows from a nonvanishing
+        cumulative product of the relevant <code>T</code>'s when
+        <code>B_L</code> and the <code>C</code>'s also have nonzero lower
+        scales. This only asks for a width-independent fraction of maximal
+        action, not <code>Tₗ→1</code>, and it is not supplied by the paper's
+        elementary spectral argument.
+      </div>
+<h3>Define the epsilon-insignificant state directly</h3>
+<p>
+        For the standard denominator <code>√v̂+ε</code>, define each
+        coordinate's exact fractional attenuation relative to epsilon-free
+        Adam. On coordinates with <code>√v̂&gt;0</code>:
+      </p>
+<div class="equation">Eₜ[i,j] = ε/(√v̂ₜ[i,j]+ε),
+
+m̂ₜ[i,j]/(√v̂ₜ[i,j]+ε)
+= (1-Eₜ[i,j]) · m̂ₜ[i,j]/√v̂ₜ[i,j].</div>
+<p>
+        Choose tolerances <code>δ,ρ∈(0,1)</code>. Call a layer
+        <code>I(δ,ρ)</code>, an <strong>epsilon-insignificant state</strong>, if
+        at least a fraction <code>1-ρ</code> of the relevant coordinates have
+        <code>Eₜ[i,j]≤δ</code>. Equivalently, that bulk has
+        <code>√v̂ₜ[i,j]≥((1-δ)/δ)ε</code>. For sparse updates, “fraction” should
+        be weighted by epsilon-free update energy so that inactive zero
+        coordinates do not dominate the diagnostic.
+      </p>
+<div style="max-width:100%;overflow-x:auto"><table>
+<thead>
+<tr><th>State</th><th>Bulk diagnostic</th><th>Optimizer behavior</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>Epsilon-insignificant</td>
+<td><code>√v̂≫ε</code>; small high quantile of <code>E</code></td>
+<td>Approximately scale-invariant preconditioning</td>
+</tr>
+<tr>
+<td>Mixed</td>
+<td><code>√v̂≈ε</code> on a material fraction</td>
+<td>Coordinate attenuation can change both RMS and stable rank</td>
+</tr>
+<tr>
+<td>Epsilon-dominated</td>
+<td><code>√v̂≪ε</code></td>
+<td><code>P≈m̂/ε</code>, a linear momentum-like regime</td>
+</tr>
+</tbody>
+</table></div>
+<div class="callout claim">
+<strong>State-preservation proposition</strong>
+        Suppose at least a fraction <code>1-ρ</code> of the relevant coordinates
+        obey <code>√v̂ₜ[i,j]≥c/d_out</code>, uniformly over the intended widths
+        and times. With <code>ε=e/d_out</code>, those coordinates have
+        <code>Eₜ[i,j]≤e/(c+e)</code>. Thus a small constant <code>e/c</code>
+        preserves an epsilon-insignificant state, while
+        <code>ε=o(1/d_out)</code> drives the attenuation to zero. This captures
+        the practical intuition that epsilon is usually already insignificant:
+        scale it at the upper-bound rate to avoid introducing a width trend,
+        then verify that the normalized bulk did not collapse. The upper bound
+        <code>√v̂=O(1/d_out)</code> by itself gives no positive <code>c</code>.
+      </div>
+<p>
+        In the stronger empirical transfer model where the bulk distribution
+        of <code>d_out√v̂</code> is width-invariant, a reference choice transfers
+        transparently:
+      </p>
+<div class="equation">ε(d_out) = ε(d_ref) · d_ref/d_out
+
+⇒ the bulk distribution of ε(d_out)/√v̂(d_out) is unchanged.</div>
+<p>
+        If backward faithfulness and forward feature scale strengthen
+        <code>Fₗ,Bₗ=O(1)</code> to <code>Θ(1)</code>, then the exact identities
+        give <code>‖Gₗ‖_*=Θ(√(d_in/d_out))</code> and
+        <code>RMS(Gₗ)=Θ(1/d_out)</code>. Calling individual coordinates
+        “typical” still needs a dense, nonspiky distribution; an RMS lower
+        bound can be carried by a small fraction of coordinates.
+      </p>
+<div class="callout warning">
+<strong>The easy-to-miss matrix fact</strong>
+        In a square width-<code>d</code> hidden layer, every dense gradient
+        entry can be <code>Θ(1/d)</code> while
+        <code>‖G‖_*=Θ(1)</code>. Rank-one coherence builds an order-one
+        operator from many small entries. The spectral condition sees the
+        operator norm; Adam's epsilon sees the entries.
+      </div>
+<h3>An exact crossover with no probability or asymptotic shorthand</h3>
+<p>
+        Let <code>m=d_out</code>, <code>n=d_in</code>, choose signs
+        <code>sᵢ,tⱼ∈{−1,+1}</code>, and set
+        <code>aᵢ=sᵢ/m</code>, <code>hⱼ=tⱼ</code>. Then all of the paper's scales
+        hold exactly up to unit constants:
+      </p>
+<div class="equation">gᵢⱼ = sᵢtⱼ/m,                   ‖g‖_* = √(n/m),
+
+Pᵢⱼ = gᵢⱼ/(|gᵢⱼ|+ε)
+     = sᵢtⱼ/(1+εm),
+
+‖P‖_* = √(mn)/(1+εm).
+
+Imposing η‖P‖_* = √(m/n) gives exactly
+
+η_required = (1+εm)/n.</div>
+<p>
+        Equal magnitudes make this toy rank one even when epsilon is nonzero;
+        that choice isolates the scale transition. With heterogeneous
+        <code>|aᵢ|</code> and <code>|hⱼ|</code>, the additive denominator is not
+        separable, and <code>P</code> is generally higher rank. The exact
+        <code>q,r</code> learning-rate formula from Section 6 then handles the
+        changed geometry.
+      </p>
+<div style="max-width:100%;overflow-x:auto"><table>
+<thead>
+<tr><th>Limit of <code>εd_out</code></th><th>Adam regime</th><th>Required η in the exact toy</th></tr>
+</thead>
+<tbody>
+<tr>
+<td><code>εd_out → 0</code>, equivalently
+              <code>ε=o(1/d_out)</code></td>
+<td>Sign-normalized; epsilon vanishes</td>
+<td><code>η ∼ 1/d_in</code></td>
+</tr>
+<tr>
+<td><code>εd_out → c∈(0,∞)</code>, equivalently
+              <code>ε=Θ(1/d_out)</code></td>
+<td>Width-independent mixed regime</td>
+<td><code>η ∼ (1+c)/d_in = Θ(1/d_in)</code></td>
+</tr>
+<tr>
+<td><code>εd_out → ∞</code>, including fixed positive epsilon</td>
+<td>Linear: <code>P≈g/ε</code></td>
+<td><code>η ∼ εd_out/d_in</code>; for equal widths,
+              <code>η∼ε</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>
+        This also explains why fixed epsilon can look harmless throughout a
+        finite sweep. In this unit-constant toy, <code>ε=10⁻⁸</code> crosses
+        over only near <code>d_out=10⁸</code>. That number is not a prediction
+        for a network: loss reduction, batch averaging, clipping, sparsity,
+        parameter multipliers, and the coordinate distribution all change the
+        constant. The empirical comparison is always the distribution of
+        <code>√v̂ᵢⱼ/ε</code> in the optimizer's actual coordinates.
+      </p>
+<h3>Scaling epsilon and scaling gradients are the same convention change</h3>
+<p>
+        Suppose every gradient in one layer is multiplied by a positive
+        width-dependent constant <code>c</code> before Adam updates its moments.
+        Bias-corrected moments then scale as
+        <code>m̂→c m̂</code> and <code>√v̂→c√v̂</code>, so exactly
+      </p>
+<div class="equation">Q(cg₀,…,cgₜ; ε) = Q(g₀,…,gₜ; ε/c).</div>
+<p>
+        Thus raw gradients with <code>ε∝1/d_out</code> are equivalent, for the
+        normalized quotient, to multiplying gradients by
+        <code>c∝d_out</code> and keeping epsilon fixed. This is why an
+        adaptive-optimizer theorem can use a width-independent entrywise
+        function while an ordinary raw-gradient Adam implementation cannot:
+        the paper's recalled <code>abcd</code> convention explicitly permits a
+        width-dependent gradient multiplier before the entrywise optimizer.
+      </p>
+<h3>A brief μP cross-check</h3>
+<p>
+        This elementary result matches the role of scale in μP, but does not
+        replace its theory. <a href="https://arxiv.org/pdf/2308.01814">Tensor
+        Programs IVb</a> formalizes a broader notion of
+        <em>faithfulness</em>: after the prescribed
+        parameter and gradient scalings, optimizer inputs remain order one at
+        each fixed training time under its representability and regularity
+        assumptions. Its Remark 2.2.6 also notes the exact convention change
+        above: multiplying gradients by a positive width power is equivalent
+        to dividing epsilon by the same power.
+      </p>
+<p>
+<a href="https://arxiv.org/pdf/2203.03466#page=25">Tensor Programs V,
+        Appendix B.3</a> says its Adam derivation assumes epsilon is negligible
+        and, when it is not, prescribes an outside-the-root epsilon scaling of
+        <code>1/fan_in</code> (or <code>1/fan_in²</code> inside the root) in its
+        μP optimizer coordinates. That is not a competing raw-weight
+        <code>d_out</code> law: μP includes parameter and gradient multipliers.
+        Once optimizer coordinates are translated with
+        <code>Q(cg;ε)=Q(g;ε/c)</code>, the statements are compatible. Neither
+        μP citation by itself proves that the raw-weight bulk
+        <code>d_out√v̂</code> stays nonzero in a particular trained network. The
+        same appendix recommends width-independent AdamW weight decay; with
+        <code>η=Θ(1/d_in)</code> and growing <code>d_in</code>, that is the
+        spectrally subleading
+        <code>ηλ=o(1)</code> row of Section 11, not a claim that decay itself
+        saturates the per-step spectral budget.
+      </p>
+<p>
+        Parameter multipliers require the same bookkeeping. If the model uses
+        <code>W=αw</code> and Adam optimizes <code>w</code>, then
+      </p>
+<div class="equation">g_w = αg_W,
+ΔW_adapt = -αη Q(g_W history; ε_w/α).</div>
+<p>
+        The effective epsilon in actual-weight gradient units is
+        <code>ε_w/α</code>, while the effective adaptive learning rate on
+        <code>W</code> is <code>αη</code>. Therefore “scale epsilon by
+        <code>1/d_out</code>” is correct only after naming the parameter seen by
+        Adam. For the convention used throughout this audit—Adam directly
+        optimizes <code>W</code>—the rule is literal.
+      </p>
+<div class="callout scope">
+<strong>Denominator convention</strong>
+        The derivation assumes standard outside-the-root epsilon,
+        <code>√v̂+ε</code>. An implementation using
+        <code>√(v̂+ε)</code> gives epsilon squared-gradient units. Under the same
+        normalized-bulk noncollapse condition, its analogous state-preserving
+        scale is <code>ε=O(1/d_out²)</code>, with little-o for an asymptotically
+        negligible term.
+      </div>
+<p>
+        The AdamW consequence is immediate. The decay strength is
+        <code>ηλ</code>, so a fixed-epsilon crossover also changes how weight
+        decay transfers. In equal-width sign-normalized layers
+        <code>η=Θ(1/d)</code>; in the fixed-epsilon linear limit the exact toy
+        instead has <code>η→ε</code>. Any width rule for <code>λ</code> must name
+        which of these optimizer regimes it is intended to accompany.
+      </p>
+</section>
+<section id="adamw">
+<h2>11. The AdamW extension</h2>
+<p>For decoupled AdamW applied to the actual layer matrix, write</p>
+<div class="equation">Wₜ₊₁ = Wₜ - ηₗ Pₜ - ηₗ λₗ Wₜ,
+
+ΔW_total = ΔW_adapt + ΔW_decay
+         = -ηₗPₜ - ηₗλₗWₜ.</div>
+<p>
+        Let <code>sₗ = √(d_out/d_in)</code>. If the current weights already
+        obey <code>‖Wₜ‖_* = Θ(sₗ)</code> and the adaptive learning rate is
+        chosen so <code>‖ηₗPₜ‖_* = Θ(sₗ)</code>, then
+      </p>
+<div class="equation">‖ΔW_decay‖_* = ηₗλₗ ‖Wₜ‖_* = Θ((ηₗλₗ) sₗ).</div>
+<p>
+        Define the dimensionless per-step decay strength
+        <code>δₗ = ηₗλₗ</code>. The spectral budget is transparent:
+      </p>
+<div style="max-width:100%;overflow-x:auto"><table>
+<thead>
+<tr><th>Decay regime</th><th>Update scale</th><th>Interpretation</th></tr>
+</thead>
+<tbody>
+<tr>
+<td><code>δₗ = o(1)</code></td>
+<td>Decay is spectrally subleading.</td>
+<td>The adaptive update controls feature motion. With
+              <code>ηₗ=Θ(1/d_in)</code>, fixed <code>λ</code>, and growing
+              <code>d_in</code>, this is the large-width regime.</td>
+</tr>
+<tr>
+<td><code>δₗ = Θ(1)</code></td>
+<td>Decay and adaptive update are both leading order.</td>
+<td>The total still satisfies the condition provided they do not
+              asymptotically cancel. To keep this regime under
+              <code>ηₗ=Θ(1/d_in)</code>, use
+              <code>λₗ=Θ(d_in)</code>.</td>
+</tr>
+<tr>
+<td><code>δₗ → ∞</code></td>
+<td>Decay exceeds the spectral update budget.</td>
+<td>Weights shrink or flip at a width-growing rate; the proposed
+              maximal-update scaling is violated absent a compensating
+              redefinition.</td>
+</tr>
+</tbody>
+</table></div>
+<div class="callout warning">
+<strong>No-cancellation assumption</strong>
+        The triangle inequality gives an upper bound on the total update.
+        A matching lower bound needs the same kind of no-fine-cancellation
+        assumption used in the paper: <code>-ηPₜ</code> and
+        <code>-ηλWₜ</code> must not cancel in the leading singular directions.
+      </div>
+<h3>Per-step versus whole-run regularization</h3>
+<p>
+        Ignoring the adaptive update, repeated AdamW decay multiplies the weight
+        by
+      </p>
+<div class="equation">W_T = [∏ₜ (1 - ηₜλ)] W₀
+    ≈ exp(-λ Σₜηₜ) W₀            when every ηₜλ is small.</div>
+<p>
+        Consequently, fixed <code>λ</code> plus
+        <code>η=Θ(1/d_in)</code> weakens decay over a fixed number of steps.
+        There are three distinct transfer targets:
+      </p>
+<ul class="tight">
+<li>Keep decay spectrally harmless: require only
+          <code>ηₗλₗ = O(1)</code>.</li>
+<li>Keep per-step fractional shrinkage constant: hold
+          <code>ηₗλₗ</code> constant, so <code>λₗ ∝ 1/ηₗ</code>.</li>
+<li>Keep whole-run shrinkage constant: hold
+          <code>λₗ Σₜηₗ,t</code> constant, which also depends on the number of
+          steps and schedule.</li>
+</ul>
+<div class="callout error">
+<strong>AdamW is not “Adam with L2 added to the gradient”</strong>
+        If <code>λW</code> is inserted into the gradient before the moment
+        estimates, it is transformed by momentum and coordinatewise
+        preconditioning. The clean decomposition above no longer holds. The
+        extension here is specifically for decoupled AdamW semantics.
+      </div>
+</section>
+<section id="limits">
+<h2>12. Corrected claims and limitations</h2>
+<div style="max-width:100%;overflow-x:auto"><table>
+<thead>
+<tr><th>Claim</th><th>Status</th><th>Needed assumptions</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>Rectangular raw gradients satisfy
+              <code>‖Gₗ‖_*=O(√(d_in/d_out))</code> and
+              <code>RMS(Gₗ)=O(1/d_out)</code>.</td>
+<td class="good">Upper bound derived</td>
+<td>Fixed depth, <code>B_L=O(1)</code>, bounded normalized forward
+              features, spectral-weight constants, and activation Jacobian
+              norms. A matching lower bound additionally needs backward
+              faithfulness.</td>
+</tr>
+<tr>
+<td>First-step Adam has learning rate
+              <code>Θ(1/d_in)</code>.</td>
+<td class="good">Derived</td>
+<td>Batch one, dense nondegenerate row/column factors, actual weight
+              matrix as optimized parameter, and an epsilon-insignificant or
+              controlled mixed state. <code>ε=O(1/d_out)</code> preserves that
+              state only when the normalized bulk does not collapse; little-o
+              gives the literal epsilon-free limit.</td>
+</tr>
+<tr>
+<td>Later Adam has learning rate
+              <code>Θ(1/d_in)</code>.</td>
+<td class="partial">Conditional</td>
+<td><code>qₜ=Θ(1)</code> and <code>rₜ=Θ(1)</code> over the intended
+              width family and training horizon.</td>
+</tr>
+<tr>
+<td>Later Adam achieves maximal feature motion.</td>
+<td class="partial">Additional condition</td>
+<td>All size assumptions above plus
+              <code>κ(Pₜ,hₜ)=Θ(1)</code> and no cancellation with other feature
+              update paths.</td>
+</tr>
+<tr>
+<td>Adam has an order-one first-order loss effect.</td>
+<td class="partial">Separate condition</td>
+<td>Nonvanishing Frobenius cosine with the current gradient and
+              controlled Taylor remainder. Momentum can violate descent at an
+              individual step.</td>
+</tr>
+<tr>
+<td>AdamW preserves the spectral condition.</td>
+<td class="partial">Conditional</td>
+<td>Adaptive conditions above,
+              <code>ηₗλₗ=O(1)</code>, stable constant factors, and no leading
+              cancellation. Constant whole-run regularization requires a
+              separate schedule decision.</td>
+</tr>
+</tbody>
+</table></div>
+<h3>Architectural and asymptotic limits</h3>
+<ul class="tight">
+<li>The derivation is for dense matrix parameters. Bias vectors,
+          embeddings with sparse row access, convolution kernels, tied weights,
+          attention tensors, and parameterized multipliers need their own shape
+          map.</li>
+<li>The clean backward theorem is for a fixed-depth chain. Residual or
+          attention branches introduce path sums; growing depth requires
+          control of products and sums of layer constants rather than a
+          fixed-number iteration.</li>
+<li>All <code>Θ</code> statements refer to a specified family of models
+          as widths grow. They say nothing by themselves about constants,
+          finite-width optima, depth scaling, batch scaling, or training-time
+          scaling.</li>
+<li>Epsilon scaling is coordinate-dependent. Raw weights, normalized
+          trainable parameters, and explicit gradient multipliers describe
+          different optimizer inputs even when they implement the same forward
+          matrix.</li>
+<li>Fixed finite time is materially easier than a number of optimizer
+          steps that grows with width. History complexity and stable rank can
+          grow with the horizon.</li>
+<li>Algebraic low rank, stable rank, activation alignment, and
+          gradient-descent alignment are different measurements and should be
+          logged separately.</li>
+<li>Weight decay mostly rescales existing feature maps. A leading decay
+          update can satisfy an operator-norm budget while failing to represent
+          task-directed feature learning.</li>
+</ul>
+</section>
+<section id="tests">
+<h2>13. Minimal empirical audit for a real training run</h2>
+<p>
+        For every matrix layer and selected steps, log the following against
+        width. These measurements directly test every assumption used above:
+      </p>
+<div style="max-width:100%;overflow-x:auto"><table>
+<thead>
+<tr><th>Quantity</th><th>Formula</th><th>Question answered</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>Forward/backward scales</td>
+<td><code>F=‖h‖/√d_in</code> and
+              <code>B=√d_out‖a‖</code></td>
+<td>Is the rectangular gradient ceiling tight, or is the backward
+              signal collapsing?</td>
+</tr>
+<tr>
+<td>Backward action fraction</td>
+<td><code>T=‖DᵀWᵀa_next‖/(‖W‖_*‖a_next‖)</code></td>
+<td>Does backprop retain a width-independent fraction of the
+              available spectral action?</td>
+</tr>
+<tr>
+<td>Normalized entry energy</td>
+<td><code>qₜ = ‖Pₜ‖²_F/(d_out d_in)</code></td>
+<td>Is Adam in the order-one-entry regime?</td>
+</tr>
+<tr>
+<td>Stable rank</td>
+<td><code>rₜ = ‖Pₜ‖²_F/‖Pₜ‖²_*</code></td>
+<td>Does <code>1/d_in</code>, an intermediate rule, or
+              <code>1/√d_in</code> follow?</td>
+</tr>
+<tr>
+<td>Action alignment</td>
+<td><code>κₜ = ‖Pₜhₜ‖/(‖Pₜ‖_*‖hₜ‖)</code></td>
+<td>Does the update actually move current features?</td>
+</tr>
+<tr>
+<td>Gradient cosine</td>
+<td><code>χₜ = ⟨Pₜ,gₜ⟩/(‖Pₜ‖_F‖gₜ‖_F)</code></td>
+<td>Is the first-order step a nonvanishing descent direction?</td>
+</tr>
+<tr>
+<td>Epsilon attenuation</td>
+<td>quantiles of <code>d_out√v̂</code> and
+              <code>E=ε/(√v̂+ε)</code>, plus unweighted and update-energy-weighted
+              fractions exceeding a chosen tolerance</td>
+<td>Is the layer in an <code>I(δ,ρ)</code> state, mixed, or
+              epsilon-dominated?</td>
+</tr>
+<tr>
+<td>Decay ratio</td>
+<td><code>‖ηλW‖_*/‖ηP‖_*</code> and
+              <code>ηλ</code></td>
+<td>Is AdamW decay negligible, leading, or excessive?</td>
+</tr>
+<tr>
+<td>Total-update cancellation</td>
+<td><code>‖ηP+ηλW‖_*/(‖ηP‖_*+‖ηλW‖_*)</code></td>
+<td>Does the lower-bound assumption hold?</td>
+</tr>
+</tbody>
+</table></div>
+</section>
+</article>
+</main>
+</body>
+</html>

@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Brownian Motion and SDE Foundations</title>
+<style>
+    :root {
+      --ink: #e5edf5; --muted: #aab7c4; --line: #344250; --soft: #1b2530;
+      --paper: #141b24; --blue: #74b8ff; --green: #78d4a0; --amber: #f6c76b;
+      --violet: #c5adff; --shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); background: #090d13; font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { max-width: 1120px; min-height: 100vh; margin: 0 auto; background: var(--paper); box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.16), 0 18px 48px rgba(0, 0, 0, 0.32); }
+    header { padding: 56px 56px 28px; border-bottom: 1px solid var(--line); background: #151f29; }
+    article { padding: 32px 56px 64px; }
+    h1 { margin: 0 0 14px; font-size: clamp(34px, 5vw, 56px); line-height: 1.02; letter-spacing: 0; }
+    h2 { margin: 44px 0 14px; padding-top: 28px; border-top: 1px solid var(--line); font-size: 28px; line-height: 1.18; letter-spacing: 0; }
+    h3 { margin: 28px 0 8px; font-size: 20px; line-height: 1.25; letter-spacing: 0; }
+    p { margin: 10px 0; }
+    a { color: var(--blue); }
+    code { padding: 0.06em 0.28em; border: 1px solid #3b4a59; border-radius: 4px; background: var(--soft); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.95em; }
+    .subtitle { max-width: 900px; color: var(--muted); font-size: 19px; line-height: 1.45; }
+    .back { margin: 20px 0 0; font-weight: 650; }
+    .toc, .callout, figure { border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
+    .toc { margin: 26px 0 8px; padding: 16px 18px; background: var(--soft); }
+    .toc strong { display: block; margin-bottom: 8px; }
+    .toc ol { margin: 0; padding-left: 22px; columns: 2; column-gap: 36px; }
+    .toc li { break-inside: avoid; margin: 3px 0; }
+    .callout { margin: 18px 0; padding: 14px 16px; border-left-width: 5px; background: #151f29; }
+    .callout strong:first-child { display: block; margin-bottom: 4px; }
+    .definition { border-left-color: var(--blue); }
+    .interpretation { border-left-color: var(--violet); }
+    .caution { border-left-color: var(--amber); }
+    .equation { margin: 14px 0; padding: 12px 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: #111a23; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; }
+    table { width: 100%; margin: 18px 0; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 9px 10px; border: 1px solid var(--line); vertical-align: top; text-align: left; }
+    th { background: #1c2935; font-weight: 650; }
+    tbody tr:nth-child(even) td { background: #16212b; }
+    figure { margin: 24px 0; padding: 16px; background: #141b24; }
+    figcaption, .small { margin-top: 10px; color: var(--muted); font-size: 14px; }
+    svg { display: block; width: 100%; height: auto; }
+    @media (max-width: 760px) {
+      header { padding: 34px 22px 22px; }
+      article { padding: 24px 22px 48px; }
+      .toc ol { columns: 1; }
+      table { font-size: 13px; }
+      th, td { padding: 7px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+<header>
+<h1>Brownian Motion and SDE Foundations</h1>
+<p class="subtitle">
+      The probability and stochastic-calculus prerequisites for the batch-size and duration arguments in the
+      Complete(d) Hyperparameter Transfer guide. Exact definitions and theorems are kept separate from the
+      modeling assumptions needed to apply them to an optimizer.
+    </p>
+<p class="back"><a href="completed_hyperparameter_transfer_guide.html#sde">← Return to the main guide's SDE section</a></p>
+</header>
+<article>
+<nav class="toc">
+<strong>Contents</strong>
+<ol>
+<li><a href="#why">Why an SDE appears</a></li>
+<li><a href="#probability">The probability objects</a></li>
+<li><a href="#variance">Independent noise and variance</a></li>
+<li><a href="#walk">The scaled random walk</a></li>
+<li><a href="#brownian">Definition of Brownian motion</a></li>
+<li><a href="#quadratic">Quadratic variation and Ito integration</a></li>
+<li><a href="#sde">What an SDE means</a></li>
+<li><a href="#sgd">Matching SGD to an SDE</a></li>
+<li><a href="#batch">What batch averaging establishes</a></li>
+<li><a href="#limits">Limits of the approximation</a></li>
+</ol>
+</nav>
+<section id="why">
+<h2>1. Why an SDE Appears</h2>
+<p>
+        An optimizer is a discrete random recurrence: one parameter update after another. An SDE is a possible
+        small-step, many-update approximation to that recurrence. It is not a law of nature that we assume at
+        the beginning.
+      </p>
+<figure>
+<svg aria-label="From a discrete random update to an SDE" role="img" viewbox="0 0 1080 260">
+<defs>
+<marker id="arrow" markerheight="10" markerwidth="10" orient="auto" refx="8" refy="3">
+<path d="M0,0 L0,6 L9,3 z" fill="#74b8ff"></path>
+</marker>
+</defs>
+<rect fill="#172b40" height="104" rx="8" stroke="#5a8fca" width="230" x="28" y="78"></rect>
+<text fill="#74b8ff" font-size="18" font-weight="700" text-anchor="middle" x="143" y="112">One random update</text>
+<text fill="#aab7c4" font-size="14" text-anchor="middle" x="143" y="140">conditional mean</text>
+<text fill="#aab7c4" font-size="14" text-anchor="middle" x="143" y="162">conditional covariance</text>
+<line marker-end="url(#arrow)" stroke="#74b8ff" stroke-width="3" x1="278" x2="390" y1="130" y2="130"></line>
+<text fill="#aab7c4" font-size="13" text-anchor="middle" x="334" y="108">many small steps</text>
+<rect fill="#182d26" height="104" rx="8" stroke="#5eae80" width="260" x="410" y="78"></rect>
+<text fill="#78d4a0" font-size="18" font-weight="700" text-anchor="middle" x="540" y="112">Brownian limit</text>
+<text fill="#aab7c4" font-size="14" text-anchor="middle" x="540" y="140">mean becomes drift</text>
+<text fill="#aab7c4" font-size="14" text-anchor="middle" x="540" y="162">covariance becomes diffusion</text>
+<line marker-end="url(#arrow)" stroke="#74b8ff" stroke-width="3" x1="690" x2="802" y1="130" y2="130"></line>
+<text fill="#aab7c4" font-size="13" text-anchor="middle" x="746" y="108">write the limit</text>
+<rect fill="#29213d" height="104" rx="8" stroke="#806abb" width="230" x="822" y="78"></rect>
+<text fill="#c5adff" font-size="18" font-weight="700" text-anchor="middle" x="937" y="112">An SDE</text>
+<text fill="#aab7c4" font-size="14" text-anchor="middle" x="937" y="142">d theta = b dt + G dW</text>
+<text fill="#aab7c4" font-size="14" text-anchor="middle" x="937" y="164">an integral equation</text>
+</svg>
+<figcaption>
+          The calculation that matters is local: find the conditional mean and covariance of one update, then
+          check that dependence and higher-order errors are negligible in the scaling of interest.
+        </figcaption>
+</figure>
+<div class="callout interpretation">
+<strong>Reading discipline.</strong>
+        Brownian motion explains the form of a possible limiting noise process. It does not prove that a specific
+        optimizer, schedule, data pipeline, or transformer run has that limit. Those are separate modeling claims.
+      </div>
+</section>
+<section id="probability">
+<h2>2. The Probability Objects</h2>
+<p>
+        Formally, all randomness lives on a probability space <code>(Omega, F, P)</code>. Read <code>Omega</code>
+        as every possible sequence of random minibatches, shuffles, augmentations, and other draws. A random
+        variable maps an outcome <code>omega</code> in <code>Omega</code> to a number or vector.
+      </p>
+<table>
+<thead><tr><th>Notation</th><th>Meaning here</th></tr></thead>
+<tbody>
+<tr><td><code>E[X]</code></td><td>Expected value: the probability-weighted average of random quantity <code>X</code>.</td></tr>
+<tr><td><code>Var(X)</code></td><td><code>E[(X - E[X])^2]</code>, the squared size of scalar fluctuations.</td></tr>
+<tr><td><code>Cov(X)</code></td><td>For vectors, <code>E[(X - E[X])(X - E[X])^T]</code>: fluctuation sizes and directions.</td></tr>
+<tr><td><code>N(m, V)</code></td><td>A Gaussian with mean <code>m</code> and scalar variance or covariance matrix <code>V</code>.</td></tr>
+<tr><td><code>F_t</code></td><td>All information available by time <code>t</code>: past parameters and past random draws.</td></tr>
+<tr><td><code>adapted</code></td><td>May depend on <code>F_t</code>, but not on future random draws.</td></tr>
+</tbody>
+</table>
+<p>
+        A stochastic process is a random function of time. Thus <code>W_t</code> abbreviates
+        <code>W(t, omega)</code>. Fixing <code>omega</code> gives one sample path; probability statements range
+        over all such paths.
+      </p>
+</section>
+<section id="variance">
+<h2>3. Independent Noise and Variance</h2>
+<p>
+        The elementary result beneath Brownian motion is that independent centered fluctuations add in
+        <em>variance</em>, not in standard deviation. If <code>Z_1, ..., Z_n</code> are independent and centered,
+        then
+      </p>
+<div class="equation">Var(sum_i a_i Z_i) = sum_i a_i^2 Var(Z_i)</div>
+<p>
+        Expand the square. Cross terms vanish because for <code>i != j</code>,
+        <code>E[Z_i Z_j] = E[Z_i] E[Z_j] = 0</code>:
+      </p>
+<div class="equation">E[(sum_i a_i Z_i)^2]
+  = sum_i a_i^2 E[Z_i^2] + sum_{i != j} a_i a_j E[Z_i Z_j]
+  = sum_i a_i^2 Var(Z_i)</div>
+<p>
+        With unit-variance terms and unit coefficients, the sum has variance <code>n</code> and standard deviation
+        <code>sqrt(n)</code>. This is the precise sense in which centered independent noise accumulates like
+        <code>sqrt(n)</code>.
+      </p>
+</section>
+<section id="walk">
+<h2>4. The Scaled Random Walk</h2>
+<p>Let <code>xi_1, xi_2, ...</code> be independent standardized random variables:</p>
+<div class="equation">E[xi_k] = 0
+Var(xi_k) = 1</div>
+<p>For a small time mesh <code>h &gt; 0</code>, define the step process</p>
+<div class="equation">W^(h)(t) = sqrt(h) * sum_{k = 1}^{floor(t / h)} xi_k</div>
+<p>
+        The superscript <code>(h)</code> labels the approximation that takes one random kick every <code>h</code>
+        units of time; it is not an exponent. The floor counts how many kicks have occurred by time <code>t</code>.
+      </p>
+<p>
+        Why is a kick order <code>sqrt(h)</code>? There are about <code>t / h</code> kicks by time <code>t</code>.
+        If each has standard deviation <code>a(h)</code>, variance addition gives
+      </p>
+<div class="equation">Var(total fluctuation by time t) ~= (t / h) * a(h)^2</div>
+<p>
+        A finite nonzero limit proportional to <code>t</code> requires <code>a(h)^2 / h</code> to approach a
+        constant, hence <code>a(h)</code> must be proportional to <code>sqrt(h)</code>.
+      </p>
+<table>
+<thead><tr><th>Size of one kick</th><th>Variance by time <code>t</code></th><th>Limit as <code>h -&gt; 0</code></th></tr></thead>
+<tbody>
+<tr><td><code>1</code></td><td><code>t / h</code></td><td>Explodes.</td></tr>
+<tr><td><code>h</code></td><td><code>t * h</code></td><td>Vanishes.</td></tr>
+<tr><td><code>sqrt(h)</code></td><td><code>t</code></td><td>Finite nonzero diffusion.</td></tr>
+</tbody>
+</table>
+<div class="equation">Var(W^(h)(t)) = h * floor(t / h) -&gt; t</div>
+<p>
+        The displayed process is a step function. Linearly interpolate between values at
+        <code>0, h, 2h, ...</code> to obtain continuous paths. Donsker's invariance principle says these
+        interpolated paths converge in distribution, on each finite interval, to Brownian motion. This is
+        convergence of probability laws on whole functions, not pointwise convergence of one chosen path.
+      </p>
+</section>
+<section id="brownian">
+<h2>5. Definition of Brownian Motion</h2>
+<div class="callout definition">
+<strong>Definition: standard Brownian motion.</strong>
+        A real-valued process <code>W_t</code> is standard Brownian motion if <code>W_0 = 0</code>; for
+        <code>0 &lt;= s &lt; t</code>, <code>W_t - W_s ~ N(0, t - s)</code>; increments on disjoint intervals are
+        independent; and sample paths are continuous with probability one.
+      </div>
+<p>It follows that</p>
+<div class="equation">E[W_s W_t] = min(s, t)</div>
+<p>
+        For <code>s &lt;= t</code>, write <code>W_t = W_s + (W_t - W_s)</code>. The later increment is independent
+        of <code>W_s</code>, hence
+      </p>
+<div class="equation">E[W_s W_t]
+  = E[W_s^2] + E[W_s (W_t - W_s)]
+  = s + 0
+  = min(s, t)</div>
+<p>
+        In multiple dimensions, <code>W_t</code> is a vector of independent scalar Brownian motions, so
+        <code>Cov(W_t - W_s) = (t - s) I</code>.
+      </p>
+<div class="callout caution">
+<strong>No ordinary velocity.</strong>
+        An increment over length <code>h</code> is order <code>sqrt(h)</code>. Dividing by <code>h</code> is order
+        <code>1 / sqrt(h)</code>, so there is no finite derivative in the limit. Brownian paths are almost surely
+        continuous everywhere and differentiable nowhere.
+      </div>
+</section>
+<section id="quadratic">
+<h2>6. Quadratic Variation and Ito Integration</h2>
+<h3>Quadratic variation</h3>
+<p>
+        On a partition <code>0 = t_0 &lt; ... &lt; t_n = T</code>, let
+        <code>Delta W_i = W_{t_{i+1}} - W_{t_i}</code>. Then
+      </p>
+<div class="equation">sum_i (Delta W_i)^2 -&gt; T
+as max_i(Delta t_i) -&gt; 0</div>
+<p>
+        This has a short mean-square proof. Since <code>Delta W_i ~ N(0, Delta t_i)</code>,
+      </p>
+<div class="equation">E[(Delta W_i)^2] = Delta t_i
+Var((Delta W_i)^2) = 2 * (Delta t_i)^2</div>
+<p>The increments are independent, so the sum has expectation <code>T</code> and variance</p>
+<div class="equation">2 * sum_i (Delta t_i)^2
+&lt;= 2 * max_i(Delta t_i) * T
+-&gt; 0</div>
+<p>
+        Therefore it converges to <code>T</code> in mean square, hence in probability. The mnemonic
+        <code>(dW)^2 = dt</code> refers to this limit; it is not literal infinitesimal arithmetic.
+      </p>
+<h3>The Ito integral</h3>
+<p>
+        For an adapted process <code>H_t</code>, define the stochastic integral as the limit of left-endpoint sums:
+      </p>
+<div class="equation">integral_0^T H_t dW_t
+  = limit over finer partitions of sum_i H_{t_i} * (W_{t_{i+1}} - W_{t_i})</div>
+<p>
+        The left endpoint prevents <code>H_{t_i}</code> from looking at the fresh increment
+        <code>Delta W_i</code>. It is the mathematical form of not peeking at a future minibatch before taking an
+        update. Its key lemma is the Ito isometry:
+      </p>
+<div class="equation">E[(integral_0^T H_t dW_t)^2]
+  = E[integral_0^T H_t^2 dt]</div>
+<p>
+        For stepwise <code>H</code>, the proof is the same cross-term cancellation as the variance lemma. The
+        isometry then defines the integral as an <code>L^2</code> limit.
+      </p>
+<h3>Why Ito's rule has an extra term</h3>
+<p>
+        Taylor expansion has a quadratic term. For Brownian motion it survives after summing because squared
+        increments accumulate to time:
+      </p>
+<div class="equation">d f(W_t) = f'(W_t) dW_t + (1/2) f''(W_t) dt</div>
+<p>
+        For <code>f(x) = x^2</code>, this gives <code>d(W_t^2) = 2 W_t dW_t + dt</code>. Ordinary calculus would
+        incorrectly omit the final term.
+      </p>
+</section>
+<section id="sde">
+<h2>7. What an SDE Means</h2>
+<p>
+        Let parameters be a vector <code>theta_t</code> in <code>R^p</code>. The notation
+      </p>
+<div class="equation">d theta_t = b(theta_t, t) dt + G(theta_t, t) dW_t</div>
+<p>
+        describes a short random increment. It is not an ordinary equation involving a derivative
+        <code>dW_t / dt</code>. Start with the earlier definition of Brownian motion and build the increment
+        explicitly.
+      </p>
+<h3>From W to dW</h3>
+<p>
+        Standard scalar Brownian motion satisfies <code>W_(t+h) - W_t ~ N(0, h)</code>. A
+        <code>q</code>-dimensional Brownian motion contains <code>q</code> independent copies, hence
+      </p>
+<div class="equation">Delta W_t = W_(t+h) - W_t ~ N(0, h * I_q)
+
+equivalently in distribution:
+Delta W_t = sqrt(h) * z
+z ~ N(0, I_q)</div>
+<p>
+        This is the precise origin of the informal differential:
+      </p>
+<div class="equation">dW_t ~= sqrt(dt) * z
+E[dW_t | F_t] = 0
+Cov(dW_t | F_t) = I_q * dt</div>
+<p>
+        The first line is shorthand for the Gaussian-increment law, not equality between ordinary infinitesimals.
+        Brownian motion is a random path; it has no finite ordinary velocity.
+      </p>
+<h3>Why W has q noise coordinates, not p parameter coordinates</h3>
+<p>
+<code>theta</code> has <code>p</code> coordinates because the model has <code>p</code> trainable scalar
+        degrees of freedom. <code>W</code> has <code>q</code> coordinates because it is a standardized coordinate
+        system for independent random sources. It is not a second parameter vector and does not need to have the
+        same dimension.
+      </p>
+<p>
+<code>G(theta, t)</code> has shape <code>p x q</code>. Its <code>j</code>-th column is the parameter-space
+        direction and size of the <code>j</code>-th independent unit noise source:
+      </p>
+<div class="equation">dW_t is in R^q
+G(theta_t, t) is in R^(p x q)
+G(theta_t, t) dW_t is in R^p</div>
+<p>
+        The actual intrinsic noise object is the parameter covariance rate
+      </p>
+<div class="equation">D(theta, t) = G(theta, t) G(theta, t)^T</div>
+<p>
+<code>D</code> is positive semidefinite. Terminology varies: some texts call <code>G</code> the diffusion
+        matrix, while others call <code>D</code> the diffusion matrix. Here <code>G</code> is the diffusion
+        coefficient and <code>D</code> is the diffusion covariance.
+      </p>
+<p>
+        The factorization is not unique. Rotating the Brownian coordinates and counter-rotating <code>G</code>
+        leaves <code>D</code> unchanged. One can take <code>q = p</code> and a matrix square root of <code>D</code>,
+        or <code>q = rank(D)</code> to omit redundant noise coordinates. Only <code>D</code> is a property of the
+        parameter dynamics.
+      </p>
+<h3>Derive the operational short-time meaning</h3>
+<p>
+        Condition on <code>F_t</code>, the complete past. Then <code>theta_t</code>, and therefore
+        <code>b(theta_t, t)</code> and <code>G(theta_t, t)</code>, are known. The next Brownian increment is fresh:
+      </p>
+<div class="equation">Delta theta
+  ~= b(theta_t, t) * h
+     + G(theta_t, t) * Delta W_t
+
+  ~= b(theta_t, t) * h
+     + G(theta_t, t) * sqrt(h) * z
+where z ~ N(0, I_q) is independent of F_t</div>
+<p>
+        Take conditional expectation. The fresh noise has mean zero:
+      </p>
+<div class="equation">E[Delta theta | F_t] ~= b(theta_t, t) * h</div>
+<p>
+        Then compute covariance. Deterministic terms disappear, and a matrix transforms covariance on the left and
+        right:
+      </p>
+<div class="equation">Cov(Delta theta | F_t)
+  ~= Cov(G * sqrt(h) * z | F_t)
+
+  = G * [h * I_q] * G^T
+  = G G^T * h
+  = D(theta_t, t) * h</div>
+<p>
+        Replacing <code>h</code> by <code>dt</code> gives the operational statement used in the guide:
+      </p>
+<div class="equation">E[Delta theta | F_t] ~= b(theta_t, t) * dt
+Cov(Delta theta | F_t) ~= G(theta_t, t) G(theta_t, t)^T * dt</div>
+<p>
+        This is where drift and diffusion come from in an optimizer application: compute the conditional first and
+        second moments of one update. The SDE does not supply them; it summarizes the matched limiting process.
+      </p>
+<h3>A complete two-parameter example</h3>
+<p>
+        Let <code>theta = (theta_1, theta_2)</code>, choose two independent Brownian sources, and set
+      </p>
+<div class="equation">G = [ [2, 0],
+      [1, 1] ]
+
+dW = [dW_1,
+      dW_2]^T</div>
+<p>The noise part of the increment is then</p>
+<div class="equation">G dW = [2 dW_1,
+          dW_1 + dW_2]^T</div>
+<p>
+        The first parameter receives only source one. The second receives both sources. Thus the parameter noises
+        are correlated even though <code>dW_1</code> and <code>dW_2</code> are independent:
+      </p>
+<div class="equation">Cov(G dW) / dt
+  = G G^T
+  = [ [4, 2],
+      [2, 2] ]</div>
+<p>
+        The off-diagonal <code>2</code> comes from the shared source <code>W_1</code>. This is why a single scalar
+        <code>noise_scale</code> is insufficient for a general optimizer: noise can have different sizes and
+        correlations in different parameter directions.
+      </p>
+<h3>Integral and Euler-Maruyama forms</h3>
+<p>The SDE notation means the integral equation</p>
+<div class="equation">theta_t = theta_0
+  + integral_0^t b(theta_s, s) ds
+  + integral_0^t G(theta_s, s) dW_s</div>
+<p>Its standard small-step simulation is exactly the short-time construction above:</p>
+<div class="equation">theta_(k+1) = theta_k
+  + b(theta_k, t_k) * h
+  + G(theta_k, t_k) * sqrt(h) * z_k
+
+z_k ~ N(0, I_q), independent from the past</div>
+<p>
+        The next section matches this form to minibatch SGD. It explains why the main guide asks which quantities
+        make deterministic increments O(<code>h</code>) and random increments O(<code>sqrt(h)</code>).
+      </p>
+</section>
+<section id="sgd">
+<h2>8. Matching Minibatch SGD to an SDE</h2>
+<p>
+        Let <code>X_i(theta)</code> be the gradient from one randomly selected training unit. At fixed parameters,
+        define
+      </p>
+<div class="equation">mu(theta)    = E[X_i(theta) | theta]
+Sigma(theta) = Cov(X_i(theta) | theta)
+             = E[(X_i - mu)(X_i - mu)^T | theta]</div>
+<p>
+<code>Sigma(theta)</code> is a <code>p x p</code> matrix: the covariance of one randomly drawn unit
+        gradient around the population gradient. It is not the cross-covariance of two different units.
+      </p>
+<div class="equation">g_batch(theta) = (1 / B) * sum_{i = 1}^B X_i(theta)
+
+xi_batch(theta) = g_batch(theta) - mu(theta)</div>
+<p>
+        The old label <code>xi_B</code> meant “noise for a batch of size B,” not “the i-th summand.” This page now
+        uses <code>xi_batch</code> to make that distinction explicit. Under conditionally iid sampling, Section 9
+        derives
+      </p>
+<div class="equation">E[xi_batch(theta) | F_t] = 0
+Cov(xi_batch(theta) | F_t) = Sigma(theta) / B</div>
+<p>
+        Conditioning on <code>F_t</code> fixes the complete past and current parameters. The equality is exact for
+        sampling with replacement under the stated definition of <code>Sigma</code>; the approximation used in
+        practice recognizes that training units are often correlated.
+      </p>
+<h3>Use the covariance in SGD</h3>
+<div class="equation">theta_(k+1) = theta_k - eta * g_batch(theta_k)</div>
+<p>With gradient-flow time <code>t_k = k * eta</code>, one update has</p>
+<div class="equation">E[Delta theta_k | F_k] = -grad_L(theta_k) * dt
+
+Cov(Delta theta_k | F_k)
+  ~= eta^2 * Sigma(theta_k) / B
+  = [eta / B * Sigma(theta_k)] * dt</div>
+<p>
+        Section 7 says that an SDE noise term <code>G dW_t</code> contributes covariance
+        <code>G G^T dt</code>. We therefore need a matrix <code>G</code> whose product with its transpose is
+        <code>(eta / B) * Sigma</code>. Take the positive-semidefinite matrix square root
+        <code>Sigma^(1/2)</code>, defined by <code>Sigma^(1/2) Sigma^(1/2) = Sigma</code>, and set
+      </p>
+<div class="equation">G(theta_t) = sqrt(eta / B) * Sigma(theta_t)^(1/2)</div>
+<p>
+        Then the SDE noise increment has exactly the required covariance:
+      </p>
+<div class="equation">Cov[G dW_t | F_t]
+  = G * [I * dt] * G^T
+
+  = [sqrt(eta / B) * Sigma^(1/2)]
+    * [sqrt(eta / B) * Sigma^(1/2)]^T * dt
+
+  = [eta / B * Sigma] * dt</div>
+<p>
+        The scalar square root appears because covariance is quadratic in the noise coefficient. The matrix square
+        root chooses directions and correlations whose covariance is <code>Sigma</code>. Replacing the discrete
+        state <code>theta_k</code> by its continuous approximation <code>theta_t</code>, the local-moment-matched
+        SDE is therefore
+      </p>
+<div class="equation">d theta_t = -grad_L(theta_t) dt
+  + sqrt(eta / B) * Sigma(theta_t)^(1/2) dW_t</div>
+<div class="callout caution">
+<strong>Lower LR is only partly “smaller Brownian time.”</strong>
+        For SGD, <code>dt = eta</code> refines deterministic drift, but the diffusion coefficient
+        <code>sqrt(eta / B)</code> also shrinks at fixed batch.
+      </div>
+<p>
+        A formal diffusion limit needs small updates, regular state dependence, and a martingale or weak-dependence
+        central-limit argument. It is normally a local approximation, not an exact finite-LR identity.
+      </p>
+</section>
+<section id="batch">
+<h2>9. What Batch Averaging Actually Establishes</h2>
+<h3>High alignment does not contradict conditional independence</h3>
+<p>Write one example gradient as</p>
+<div class="equation">X_i = mu + epsilon_i
+E[epsilon_i | F_t] = 0</div>
+<p>
+        Under conditional iid sampling, centered fluctuations from distinct draws have zero cross-covariance. But
+        the raw gradients can still be highly aligned because they share a nonzero mean:
+      </p>
+<div class="equation">E[X_i X_j^T | F_t] = mu mu^T       for i != j
+Cov(X_i, X_j | F_t) = E[epsilon_i epsilon_j^T | F_t] = 0</div>
+<p>
+        Thus high cosine similarity or a common descent direction is not evidence against the assumption. The
+        <code>1 / B</code> calculation concerns only fluctuations around the common mean.
+      </p>
+<h3>The iid calculation</h3>
+<div class="equation">xi_batch
+  = (1 / B) * sum_{i = 1}^B (X_i - mu)
+
+Cov(xi_batch | F_t)
+  = (1 / B^2) * sum_i sum_j
+      E[(X_i - mu)(X_j - mu)^T | F_t]</div>
+<p>
+        A “diagonal term” means <code>i = j</code> in this batch-index double sum, not a diagonal entry of
+        <code>Sigma</code>. Each diagonal term is the full matrix
+      </p>
+<div class="equation">E[(X_i - mu)(X_i - mu)^T | F_t] = Sigma(theta)</div>
+<p>
+        Conditional independence zeros the <code>i != j</code> terms. There are <code>B</code> diagonal terms:
+      </p>
+<div class="equation">Cov(xi_batch | F_t)
+  = (1 / B^2) * B * Sigma(theta)
+  = Sigma(theta) / B</div>
+<h3>What fails in practice, and what is load-bearing</h3>
+<p>
+        The iid condition is sufficient, not the actual load-bearing claim. The batch rule needs aggregate
+        batch-noise covariance to be approximately proportional to <code>1 / B</code> over the transferred range.
+        In general, for <code>i != j</code>, let <code>C_ij = Cov(X_i, X_j | F_t)</code>. Then
+      </p>
+<div class="equation">Cov(xi_batch | F_t)
+  = (1 / B^2) * [sum_i Sigma_i + sum_{i != j} C_ij]</div>
+<p>
+        If all within-unit covariances equal <code>Sigma</code> and all cross-covariances are one matrix
+        <code>C</code>, then
+      </p>
+<div class="equation">Cov(xi_batch | F_t)
+  = Sigma / B + ((B - 1) / B) * C</div>
+<p>
+        Persistent positive cross-covariance prevents noise from falling as <code>1 / B</code>. This arises, for
+        example, when tokens from one document are treated as independent samples, packed or duplicated sequences
+        are correlated, dropout/augmentation randomness is shared, or batches are deliberately non-iid. For a
+        finite dataset of size <code>N</code> sampled uniformly without replacement,
+      </p>
+<div class="equation">Cov(xi_batch | theta)
+  = [(N - B) / (B * (N - 1))] * Sigma_population(theta)</div>
+<p>
+        That is close to <code>Sigma / B</code> only when <code>B</code> is much smaller than <code>N</code>.
+        In general correlation can differ by parameter direction, so there need not be one scalar effective batch
+        size.
+      </p>
+<div class="callout interpretation">
+<strong>What is load-bearing for transfer.</strong>
+        Complete(d)P requires an approximately inverse-batch covariance law, not literal iid per-token gradients.
+        If covariance does not fall roughly as <code>1 / B</code>, the square-root batch premise fails and should be
+        checked with a small batch sweep or a gradient-noise measurement.
+      </div>
+<p>
+        This covariance law alone still does not derive AdamW's square-root rule; the main guide additionally
+        matches the adaptive-moment recurrences and their SDE coefficients.
+      </p>
+</section>
+<section id="limits">
+<h2>10. Limits of the Approximation</h2>
+<table>
+<thead><tr><th>Statement</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>Independent centered increments have additive variance.</td><td>Exact probability identity under its assumptions.</td></tr>
+<tr><td>Scaled iid random walks converge to Brownian motion.</td><td>Functional central-limit theorem under its conditions.</td></tr>
+<tr><td>Batch-gradient covariance is approximately <code>Sigma / B</code>.</td><td>Modeling approximation; correlated, repeated, or non-identically distributed data can break it.</td></tr>
+<tr><td>A finite-LR optimizer is well approximated by an SDE.</td><td>Asymptotic approximation; clipping, large steps, heavy tails, and sharp state changes can break it.</td></tr>
+<tr><td>Transferred AdamW hyperparameters preserve behavior.</td><td>Optimizer-specific derivation plus empirical claim, not a consequence of Brownian motion alone.</td></tr>
+</tbody>
+</table>
+<p>
+        This is the bridge back to the main guide: use this page for definitions and lemmas; require the main page
+        to show the optimizer-specific matching calculation before accepting a transfer rule.
+      </p>
+<p class="back"><a href="completed_hyperparameter_transfer_guide.html#sde">← Return to the main guide's SDE section</a></p>
+</section>
+</article>
+</main>
+</body>
+</html>
