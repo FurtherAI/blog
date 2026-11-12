@@ -10,3 +10,5 @@
 .page_controls .muted,.quick_notes{white-space:nowrap}.quick_notes,.page_controls .icon_button{flex-shrink:0}@media(max-width:800px){.toolbar{gap:8px}}@media(max-width:440px){.page_controls label{display:none}.page_controls .icon_button{width:24px}#zoom_select{width:112px}}
 
 @media(max-width:360px){.page_controls{gap:3px}.page_controls .divider{display:none}#zoom_select{width:90px}#page_select{width:46px}.quick_notes{font-size:10px;padding:4px 6px}}
+
+#theme_toggle{width:auto;min-width:40px;padding:0 6px;font-size:11px}

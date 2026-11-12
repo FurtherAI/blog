@@ -1,0 +1,12 @@
+/* Neutral page chrome; scientific colors and paper highlights remain unchanged. */
+:root:root{color-scheme:dark;--bg:#0d0d0d;--paper:#141414;--panel:#1a1a19;--panel-soft:#222222;--panel2:#181818;--surface:#1a1a19;--soft:#222222;--ink:#ededed;--muted:#aaa;--line:#333;--line-strong:#555}
+:root:root[data-theme=light]{color-scheme:light;--bg:#f9f9f7;--paper:#fcfcfb;--panel:#f2f1ec;--panel-soft:#e9e8e3;--panel2:#f2f1ec;--surface:#f2f1ec;--soft:#eeede8;--ink:#151515;--muted:#62615e;--line:#d9d8d2;--line-strong:#b7b6b0}
+body{background:var(--bg);color:var(--ink)}
+.guide_page main{background:var(--paper)}
+.guide_page header{background:var(--panel)}
+.guide_page .toc,.guide_page .callout,.guide_page .card,.guide_page .lab,.guide_page .equation,.guide_page pre,.guide_page .proof,.guide_page details,.guide_page .guide-content .section-intro{background:var(--panel)}
+.guide_page th{background:var(--panel-soft)}
+.guide_page tbody tr:nth-child(even) td{background:var(--panel)}
+.guide_page a{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+.guide_page figure{color:#e7edf3;--ink:#e7edf3;--muted:#aab7c4}
+.reader_header a,.note_panel a{color:var(--ink)}

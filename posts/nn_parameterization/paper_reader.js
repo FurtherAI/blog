@@ -129,10 +129,5 @@ function read_hash() {
   else if (selected) close_note(false);
 }
 window.addEventListener('hashchange', read_hash);
-$('theme_toggle').addEventListener('click', () => {
-  const light = document.documentElement.dataset.theme !== 'light';
-  document.documentElement.dataset.theme = light ? 'light' : 'dark';
-  $('theme_toggle').setAttribute('aria-label',`Switch to ${light ? 'dark' : 'light'} theme`);
-});
 update_page();
 read_hash();
